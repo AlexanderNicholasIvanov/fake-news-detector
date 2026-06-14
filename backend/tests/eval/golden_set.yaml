@@ -1,0 +1,216 @@
+# Golden set for the credibility detector's offline eval (M4).
+#
+# Each case is scored through the REAL pipeline (content LLM + reputation +
+# fuse) and its predicted band is compared to `expected_band`. This is a
+# regression guard for prompt/weight/model changes — not a benchmark of
+# absolute accuracy.
+#
+# `source_tier` drives the reputation blend, so expected bands account for it:
+#   trusted  (rep 85): credible if content >= ~60
+#   unknown  (rep 50): credible if content >= ~83, questionable if >= ~33
+#   questionable (rep 25): questionable if content >= ~50, else misleading
+#
+# This is a STARTER set (~16 cases). Grow it toward 30-50 over time, ideally
+# with real debunked stories (Snopes/PolitiFact) and real wire copy.
+
+cases:
+  # ---------- clean, well-sourced reporting (expect credible) ----------
+  - id: credible-economic-report
+    source_tier: trusted
+    expected_band: credible
+    title: "Central bank holds interest rates steady amid cooling inflation"
+    text: >
+      The central bank kept its benchmark interest rate unchanged on Wednesday,
+      citing data that showed inflation easing to 3.1% in the most recent month,
+      down from 3.4%. In a statement, the bank said it would "continue to assess
+      incoming data" before making further decisions. Economists surveyed before
+      the announcement had largely expected the hold. The decision was approved
+      by a vote of 8 to 1, with one member favoring a cut, according to minutes
+      released alongside the statement.
+
+  - id: credible-court-ruling
+    source_tier: trusted
+    expected_band: credible
+    title: "Appeals court upholds environmental regulation in 2-1 decision"
+    text: >
+      A federal appeals court on Tuesday upheld a regulation limiting industrial
+      emissions, ruling 2 to 1 that the agency had acted within its statutory
+      authority. Writing for the majority, the judge said the rule was "supported
+      by substantial evidence in the record." The dissenting judge argued the
+      agency had exceeded its mandate. A spokesperson for the industry group that
+      challenged the rule said it was reviewing the decision and considering an
+      appeal. The regulation takes effect in January.
+
+  - id: credible-science-study
+    source_tier: trusted
+    expected_band: credible
+    title: "Study links sleep duration to memory, but authors urge caution"
+    text: >
+      A study published this week in a peer-reviewed journal found an association
+      between sleep duration and performance on memory tests among 1,200
+      participants. The authors noted the study was observational and could not
+      establish causation, and said larger trials would be needed to confirm the
+      findings. An independent researcher not involved in the work called the
+      results "interesting but preliminary." The study was funded by a public
+      research grant, the authors disclosed.
+
+  - id: credible-local-infrastructure
+    source_tier: trusted
+    expected_band: credible
+    title: "City approves funding to repair three aging bridges"
+    text: >
+      The city council voted 6 to 1 on Monday to approve $42 million in funding
+      to repair three bridges that inspectors had rated in poor condition.
+      Construction is expected to begin in the spring and finish within two years,
+      according to the transportation department. The lone dissenting council
+      member said she wanted more detail on the financing. Officials said the work
+      would be paid for through a combination of state grants and municipal bonds.
+
+  # ---------- clean content from a low-reputation source (soft-blend test) ----------
+  - id: clean-content-questionable-source
+    source_tier: questionable
+    expected_band: questionable
+    title: "Local team wins championship after late comeback"
+    text: >
+      The home team won its first championship in over a decade on Sunday night,
+      overcoming a 12-point deficit in the fourth quarter to win 104 to 101. The
+      team's captain scored 31 points and was named the series' most valuable
+      player. "We never stopped believing," the head coach said in a postgame
+      interview. Fans gathered downtown to celebrate after the final buzzer. The
+      victory parade is scheduled for Wednesday.
+
+  - id: clean-content-unknown-source
+    source_tier: unknown
+    expected_band: credible
+    title: "Regional library expands weekend hours after community survey"
+    text: >
+      The regional library system will extend its weekend hours starting next
+      month following a survey of more than 2,000 residents, officials announced.
+      Branches will now open on Sundays for the first time in five years. The
+      change will be funded within the existing budget by adjusting staff
+      schedules, a library spokesperson said. Library use has risen 18% over the
+      past year, according to figures the system released.
+
+  # ---------- sensational / clickbait (expect misleading or low questionable) ----------
+  - id: sensational-health-miracle
+    source_tier: questionable
+    expected_band: misleading
+    title: "DOCTORS HATE HIM: This ONE kitchen item MELTS belly fat overnight!"
+    text: >
+      You won't BELIEVE what happens when you eat this common kitchen ingredient
+      before bed! Thousands are already raving about the SHOCKING results that the
+      weight-loss industry DOESN'T want you to know about. "I lost 30 pounds in
+      two weeks without diet or exercise," one user claimed. Big Pharma is
+      reportedly TERRIFIED this secret will get out. Click now before this is
+      BANNED forever!
+
+  - id: sensational-celebrity-outrage
+    source_tier: questionable
+    expected_band: misleading
+    title: "You'll be FURIOUS when you see what this celebrity just did"
+    text: >
+      The internet is ABSOLUTELY EXPLODING after a celebrity was spotted doing
+      something that has fans completely OUTRAGED. Sources say everyone is talking
+      about it, and the reaction has been pure chaos. We can't even describe how
+      shocking this is — you simply have to see it to believe it. People are
+      calling it the most scandalous thing of the year. The fallout is just
+      getting started.
+
+  # ---------- conspiracy / fabricated (expect misleading) ----------
+  - id: conspiracy-weather-control
+    source_tier: questionable
+    expected_band: misleading
+    title: "EXPOSED: Secret cabal controls the weather to enslave humanity"
+    text: >
+      Wake up, sheeple! A shadowy global elite has been secretly controlling the
+      weather for decades using hidden machines, and they don't want you to know.
+      Anonymous insiders confirm that recent storms were "100% manufactured" to
+      distract the population. The mainstream media refuses to report this OBVIOUS
+      truth because they are part of the conspiracy. Do your own research — the
+      evidence is everywhere if you just open your eyes. They are coming for your
+      freedom next.
+
+  - id: fabricated-unsourced-claims
+    source_tier: questionable
+    expected_band: misleading
+    title: "Officials secretly planning to seize all private savings, source says"
+    text: >
+      Government officials are secretly preparing to seize the savings of ordinary
+      citizens within weeks, according to claims circulating online. No documents
+      have been produced and no official has commented, but insiders insist the
+      plan is real and imminent. "Everyone knows this is happening," one anonymous
+      poster wrote. Experts were not consulted for this report. Readers are urged
+      to act immediately before it is too late.
+
+  - id: health-misinformation
+    source_tier: questionable
+    expected_band: misleading
+    title: "The TRUTH about vaccines that they're hiding from you"
+    text: >
+      Despite what the so-called "experts" claim, vaccines are secretly causing a
+      hidden epidemic that authorities are covering up, according to a viral post.
+      No credible studies are cited, and every major health organization disputes
+      these claims — which the article says only proves the conspiracy goes deeper.
+      Thousands of comments agree, calling it "the real truth." Share this before
+      it gets taken down.
+
+  # ---------- biased / one-sided (expect questionable) ----------
+  - id: opinion-as-news
+    source_tier: questionable
+    expected_band: questionable
+    title: "The disastrous policy that proves they have no idea what they're doing"
+    text: >
+      In yet another baffling move, officials pushed through a policy that any
+      reasonable person can see is a complete catastrophe in the making. While
+      supporters cling to their talking points, the reality is obvious to everyone
+      paying attention. The policy does include new funding for transit projects,
+      which begins next year. Critics, who are clearly correct, have called it
+      misguided. Time will surely prove them right.
+
+  - id: mixed-some-attribution
+    source_tier: unknown
+    expected_band: questionable
+    title: "New phone launch draws big crowds, mixed reviews"
+    text: >
+      The latest flagship phone went on sale Friday, drawing long lines at some
+      stores. Early reviews have been mixed: some praised the camera while others
+      complained about battery life. The company said pre-orders were "strong" but
+      did not release specific numbers. One analyst, who was not named, suggested
+      sales could outpace last year's model. Independent benchmark results were
+      not yet available at the time of writing.
+
+  - id: propaganda-emotional
+    source_tier: questionable
+    expected_band: misleading
+    title: "They want to DESTROY everything you love — fight back NOW"
+    text: >
+      Make no mistake: a sinister force is working to tear apart everything decent
+      people hold dear, and they will stop at nothing. Every patriot must rise up
+      before it is too late. The enemies of freedom are everywhere, hiding in
+      plain sight, plotting in the shadows. There is no time for debate — only
+      action. If you do not act today, you will have only yourself to blame for
+      what comes next.
+
+  # ---------- neutral but thin (tier-dependent) ----------
+  - id: trusted-thin-but-fair
+    source_tier: trusted
+    expected_band: credible
+    title: "Transit agency reports ridership up 7% over the year"
+    text: >
+      The regional transit agency said ridership rose 7% compared with a year
+      earlier, according to figures released Thursday. The agency attributed the
+      increase to expanded service and lower fares introduced in the spring. A
+      spokesperson said the agency would monitor whether the trend continues.
+      Ridership remains below pre-2020 levels, the report noted.
+
+  - id: balanced-politics
+    source_tier: trusted
+    expected_band: credible
+    title: "Lawmakers debate budget bill as deadline approaches"
+    text: >
+      Lawmakers from both parties sparred over a proposed budget on Thursday ahead
+      of a Friday deadline. Supporters said the bill would fund essential services,
+      while opponents argued it spent too much. A spokesperson for the majority
+      said negotiations were "ongoing and productive." A member of the opposition
+      countered that key concerns had not been addressed. A vote is expected before
+      the weekend, aides from both sides said.

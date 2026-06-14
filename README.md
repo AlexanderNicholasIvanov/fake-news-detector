@@ -6,15 +6,22 @@ stores results in Postgres, and surfaces them in a React dashboard.
 
 See [`PLAN.md`](./PLAN.md) for the full design and milestone breakdown.
 
-**Status: M0 (scaffold & infra).** The skeleton runs end-to-end — Postgres +
-Alembic, a FastAPI read API, and a Vite/React/Tailwind dashboard — but ingestion
-(M1) and scoring (M2) are not wired yet, so the feed is empty.
+**Status: MVP complete (M0–M4).** Ingestion → local-LLM scoring → dashboard runs
+end-to-end, with an offline evaluation harness.
+
+- **M0** scaffold (Postgres + Alembic, FastAPI, Vite/React/Tailwind, Docker)
+- **M1** RSS ingestion (discovery, dedup, `trafilatura` full-text, APScheduler worker)
+- **M2** credibility scoring (Ollama + `qwen3:14b`, structured output, soft blend)
+- **M3** dashboard (filters, stats, pagination, signal-breakdown detail view)
+- **M4** evaluation (golden set + regression harness)
 
 ## Prerequisites
 
 - Docker + Docker Compose
+- [Ollama](https://ollama.com) on the host with `ollama pull qwen3:14b` (for scoring)
+  - The Ollama **server** must listen on all interfaces so the container can reach
+    it: set `OLLAMA_HOST=0.0.0.0:11434` on the host and restart Ollama.
 - (For running outside Docker) Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22+
-- (M2) [Ollama](https://ollama.com) on the host with `ollama pull qwen3:14b`
 
 ## Quick start (Docker)
 
@@ -23,11 +30,25 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then:
-
-- Dashboard → http://localhost:5173  (shows "No articles yet" — expected at M0)
-- API health → http://localhost:8000/health  → `{"status":"ok"}`
+- Dashboard → http://localhost:5173 (fills as the worker ingests + scores)
+- API health → http://localhost:8000/health → `{"status":"ok"}`
 - API docs → http://localhost:8000/docs
+
+The `worker` service polls feeds on an interval (`POLL_INTERVAL_MINUTES`),
+extracts full text, and scores up to `SCORE_BATCH_SIZE` articles per cycle.
+
+## Evaluation (M4)
+
+Run the golden-set regression harness through the real scoring pipeline:
+
+```bash
+docker compose run --rm -v "$PWD/backend/tests:/app/tests" worker \
+  python -m tests.eval.run_eval
+```
+
+It prints a per-case table + confusion matrix and exits non-zero if band
+accuracy drops below the threshold — run it after changing the prompt, weights
+(`backend/config/scoring.yaml`), or model.
 
 ## Running the backend locally (without Docker)
 
