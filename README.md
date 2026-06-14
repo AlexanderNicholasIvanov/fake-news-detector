@@ -27,6 +27,21 @@ scoring → dashboard runs end-to-end, with an offline evaluation harness.
     it: set `OLLAMA_HOST=0.0.0.0:11434` on the host and restart Ollama.
 - (For running outside Docker) Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22+
 
+## Quick start (one-click executable)
+
+Double-click **`run-fakenews.exe`** in the repo root. It runs the preflight
+checks (Docker engine, Ollama + model), creates `.env` if missing, brings the
+stack up, waits for the API to be healthy, and opens the dashboard. Use
+**`stop-fakenews.exe`** to shut everything down.
+
+The launcher is a single dependency-free binary (Python standard library only,
+bundled with PyInstaller). Source: [`launcher/run_fakenews.py`](./launcher/run_fakenews.py).
+Rebuild after editing it with:
+
+```bash
+python launcher/build.py   # writes run-fakenews.exe + stop-fakenews.exe to repo root
+```
+
 ## Quick start (Docker)
 
 ```bash

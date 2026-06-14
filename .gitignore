@@ -23,3 +23,6 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Launcher build artifacts (the built .exe files at repo root ARE tracked)
+launcher/_build/
