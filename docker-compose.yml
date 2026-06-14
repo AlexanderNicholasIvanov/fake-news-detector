@@ -1,0 +1,46 @@
+# Fake-News Detector — local dev stack.
+# M0 brings up: db + api + frontend. The worker service arrives in M1.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fnd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fnd_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fakenews}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fnd} -d ${POSTGRES_DB:-fakenews}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      # Override compose-internal host regardless of .env value.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-fnd}:${POSTGRES_PASSWORD:-fnd_dev_password}@db:5432/${POSTGRES_DB:-fakenews}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # host.docker.internal lets the api/worker reach Ollama running on the host (M2+).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_API_PROXY: http://api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

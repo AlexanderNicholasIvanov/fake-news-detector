@@ -1,0 +1,5 @@
+# Per-domain reputation overrides (consumed in M2). Takes precedence over the
+# tier inferred from the source feed. Useful for one-off domains.
+#
+# domain -> tier (trusted | questionable | unknown)
+overrides: {}

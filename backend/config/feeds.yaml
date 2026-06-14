@@ -1,0 +1,12 @@
+# RSS/Atom feeds to poll (populated in M1). Deliberately mix reputation tiers
+# so the detector has a real signal range to work with.
+#
+# tier: trusted | questionable | unknown
+#
+# Example shape (replace with a real curated list in M1):
+# - name: Associated Press
+#   feed_url: https://feeds.apnews.com/apnews/topnews
+#   homepage: https://apnews.com
+#   tier: trusted
+
+feeds: []

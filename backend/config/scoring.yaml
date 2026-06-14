@@ -1,0 +1,18 @@
+# Scoring fusion config (consumed in M2). Re-tune without code changes.
+model: qwen3:14b
+
+weights:
+  content: 0.6
+  reputation: 0.4
+  corroboration: 0.0   # Phase 2 placeholder
+
+bands:
+  # final_score >= threshold -> band (evaluated high to low)
+  credible: 70
+  questionable: 40
+  # below 40 -> misleading
+
+reputation_subscores:
+  trusted: 85
+  unknown: 50
+  questionable: 25
