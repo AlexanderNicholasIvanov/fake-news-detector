@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -32,8 +33,39 @@ DASHBOARD = "http://localhost:5173"
 OLLAMA_TAGS = "http://localhost:11434/api/tags"
 HEALTH_TIMEOUT_S = 240
 
-# Don't pop up a console window for each docker subprocess in windowed mode.
-_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+def _hide_own_console() -> None:
+    """Hide this process's console window (Windows) so the app shows only its
+    native window. Only hides a console THIS process owns - never a shared parent
+    terminal - so launching from a shell doesn't hide the shell. Keeping a (hidden)
+    console means docker subprocesses inherit it and run fast; a fully console-less
+    process makes the docker CLI's daemon calls crawl."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        owner_pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid))
+        if owner_pid.value == os.getpid():
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+def _trace(msg: str) -> None:
+    """Append a line to FND_TRACE if set. Lets us observe the windowed (console-
+    less) app's teardown path during testing."""
+    path = os.environ.get("FND_TRACE")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.monotonic():10.2f}  {msg}\n")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- project setup
@@ -73,7 +105,7 @@ def ensure_env_file(root: Path) -> None:
 
 # ------------------------------------------------------------ stack control (io)
 def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False):
-    kw: dict = {"text": True, "creationflags": _CREATE_NO_WINDOW}
+    kw: dict = {"text": True}
     if capture:
         kw["capture_output"] = True
     return subprocess.run(cmd, cwd=str(cwd) if cwd else None, **kw)
@@ -114,9 +146,16 @@ def compose_up(root: Path) -> tuple[bool, str]:
 
 
 def compose_down(root: Path) -> tuple[bool, str]:
-    proc = _run(["docker", "compose", "down"], cwd=root, capture=True)
-    out = (proc.stdout or "") + (proc.stderr or "")
-    return proc.returncode == 0, out
+    # `kill` first: an immediate SIGKILL to every container. Without it, `down`
+    # tries a graceful stop and blocks on the worker mid-LLM-call until the
+    # ~60s COMPOSE_HTTP_TIMEOUT - so teardown crawled. kill + down -t 0 is ~5s
+    # even under load. The named Postgres volume survives (close != wipe data).
+    kw = {"cwd": str(root), "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    subprocess.run(["docker", "compose", "kill"], **kw)
+    proc = subprocess.run(
+        ["docker", "compose", "down", "-t", "0", "--remove-orphans"], **kw
+    )
+    return proc.returncode == 0, ""
 
 
 def wait_for_health(timeout_s: int = HEALTH_TIMEOUT_S) -> bool:
@@ -181,7 +220,10 @@ class AppUI:
         )
         html = _PAGE.replace("__ROWS__", rows).replace("__HINT__", self.hint)
         if self.window is not None:
-            self.window.load_html(html)
+            try:
+                self.window.load_html(html)
+            except Exception:
+                pass  # window may already be closing
 
     def initial_html(self) -> str:
         return _PAGE.replace("__ROWS__", "").replace("__HINT__", "")
@@ -222,6 +264,7 @@ def _message_box(title: str, text: str) -> None:
 
 
 def do_app(root: Path) -> None:
+    _hide_own_console()  # show only the native window, not a console
     try:
         import webview  # lazy: only the run binary bundles this
     except Exception as exc:  # pragma: no cover - bundling/runtime guard
@@ -244,6 +287,7 @@ def do_app(root: Path) -> None:
         min_size=(900, 600),
     )
     ui.window = window
+    closing = threading.Event()
 
     def worker() -> None:
         try:
@@ -266,6 +310,8 @@ def do_app(root: Path) -> None:
             level, msg = ollama_status(env)
             ui.set_last("ok" if level == "ok" else "warn", msg)
 
+            if closing.is_set():
+                return
             ui.begin("Starting containers (first run builds images - can take minutes)")
             ok, out = compose_up(root)
             if not ok:
@@ -280,12 +326,49 @@ def do_app(root: Path) -> None:
             else:
                 ui.set_last("warn", "API slow to start - loading anyway")
 
+            if closing.is_set():
+                return
             ui.add("..", "Loading dashboard")
             window.load_url(DASHBOARD)
         except Exception as exc:  # never leave the window stuck on a spinner
-            ui.add("err", f"Startup error: {exc!r}")
+            if not closing.is_set():
+                ui.add("err", f"Startup error: {exc!r}")
 
-    webview.start(worker)
+    def _on_closing(*_args, **_kwargs):
+        _trace("closing event fired")
+        closing.set()  # flag teardown the moment the close begins
+
+    window.events.closing += _on_closing
+
+    # Test hook: FND_TEST_AUTOCLOSE=<seconds> closes the window like clicking the X
+    # (window.destroy()), so teardown can be verified without a human at the GUI.
+    _autoclose = os.environ.get("FND_TEST_AUTOCLOSE")
+    if _autoclose:
+        def _auto() -> None:
+            time.sleep(float(_autoclose))
+            _trace("autoclose: calling window.destroy()")
+            try:
+                window.destroy()
+                _trace("autoclose: destroy() returned")
+            except Exception as exc:
+                _trace(f"autoclose: destroy() raised {exc!r}")
+        threading.Thread(target=_auto, daemon=True).start()
+
+    work = threading.Thread(target=worker, daemon=True)
+    work.start()
+    _trace("calling webview.start()")
+    webview.start()  # blocks until the window is closed
+    _trace("webview.start() returned")
+
+    # Window closed -> shut down everything this app started. Containers + network
+    # go; the named Postgres volume is kept (close != wipe data). Host Ollama is a
+    # shared service we didn't start, so it's left alone.
+    closing.set()
+    work.join(timeout=2)
+    if docker_present():
+        _trace("compose_down begin")
+        ok, _out = compose_down(root)
+        _trace(f"compose_down end ok={ok}")
 
 
 # --------------------------------------------------------------- console modes

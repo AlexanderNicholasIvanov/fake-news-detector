@@ -26,8 +26,13 @@ SOURCE = HERE / "run_fakenews.py"
 BUILD = HERE / "_build"
 VENV = BUILD / "venv"
 
-# (name, windowed_app). The app build bundles the webview backend; the console
-# build (lazy-imports webview only at runtime, never reached) stays slim.
+# (name, is_app). The app build bundles the webview backend; the console build
+# (lazy-imports webview only at runtime, never reached) stays slim.
+#
+# The app is NOT built --windowed: it keeps a console subsystem (hidden at runtime
+# via _hide_own_console) so docker subprocesses inherit a console and run fast. A
+# fully console-less (--windowed) build makes the docker CLI's daemon calls crawl
+# (teardown took ~60s); with a hidden console it's a few seconds.
 TARGETS = [
     ("run-fakenews", True),
     ("stop-fakenews", False),
@@ -48,8 +53,8 @@ def main() -> int:
     subprocess.run([py, "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
     subprocess.run([py, "-m", "pip", "install", "-q", PYINSTALLER, PYWEBVIEW], check=True)
 
-    for name, windowed in TARGETS:
-        print(f"[build] bundling {name}{' (windowed app)' if windowed else ''}")
+    for name, is_app in TARGETS:
+        print(f"[build] bundling {name}{' (app)' if is_app else ''}")
         args = [
             py, "-m", "PyInstaller", "--onefile", "--clean", "--noconfirm",
             "--name", name,
@@ -57,9 +62,10 @@ def main() -> int:
             "--workpath", str(BUILD / "work"),
             "--specpath", str(BUILD),
         ]
-        if windowed:
-            # No console window; pull in the pywebview backend + WebView2 loader.
-            args += ["--windowed", "--collect-all", "webview"]
+        if is_app:
+            # Pull in the pywebview backend + WebView2 loader. Console subsystem is
+            # kept (hidden at runtime) so docker subprocesses stay fast.
+            args += ["--collect-all", "webview"]
         args += [str(SOURCE)]
         subprocess.run(args, check=True)
 

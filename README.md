@@ -37,9 +37,11 @@ inside the window. Use **`stop-fakenews.exe`** to shut the stack down.
 
 The window uses the Edge **WebView2** runtime (pre-installed on Windows 10/11)
 via [pywebview]; the Docker stack still runs underneath and serves locally, but
-the browser and `localhost` are hidden behind the app window. Closing the window
-leaves the stack running (the worker keeps ingesting) — run `stop-fakenews.exe`
-to stop it.
+the browser and `localhost` are hidden behind the app window. **Closing the
+window shuts the whole stack down** (`docker compose kill` + `down`) — the
+containers stop within a couple of seconds and removal finishes in the
+background. The named Postgres volume is kept, so your data survives a restart.
+`stop-fakenews.exe` does the same teardown from the command line.
 
 Both binaries are built from one source ([`launcher/run_fakenews.py`](./launcher/run_fakenews.py))
 with PyInstaller; behaviour is chosen by the executable's name. Rebuild with:
