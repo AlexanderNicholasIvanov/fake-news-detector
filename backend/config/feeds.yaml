@@ -1,12 +1,54 @@
-# RSS/Atom feeds to poll (populated in M1). Deliberately mix reputation tiers
-# so the detector has a real signal range to work with.
+# RSS/Atom feeds to poll. Deliberately spans reputation tiers so the detector
+# has a real signal range to work with.
 #
-# tier: trusted | questionable | unknown
+#   tier: trusted | questionable | unknown
 #
-# Example shape (replace with a real curated list in M1):
-# - name: Associated Press
-#   feed_url: https://feeds.apnews.com/apnews/topnews
-#   homepage: https://apnews.com
-#   tier: trusted
+# NOTE: the tiers below reflect commonly-cited media-reliability ratings as a
+# STARTING POINT, not a definitive editorial judgement. Curate this list to taste
+# — it is loaded into the `sources` table on worker startup (matched by feed_url).
+# Some feeds may be geo-blocked or rate-limited from your network.
 
-feeds: []
+feeds:
+  # --- trusted: established outlets with editorial standards ---
+  - name: BBC News (World)
+    feed_url: https://feeds.bbci.co.uk/news/world/rss.xml
+    homepage: https://www.bbc.com/news
+    tier: trusted
+  - name: NPR News
+    feed_url: https://feeds.npr.org/1001/rss.xml
+    homepage: https://www.npr.org
+    tier: trusted
+  - name: The Guardian (World)
+    feed_url: https://www.theguardian.com/world/rss
+    homepage: https://www.theguardian.com
+    tier: trusted
+  - name: Al Jazeera English
+    feed_url: https://www.aljazeera.com/xml/rss/all.xml
+    homepage: https://www.aljazeera.com
+    tier: trusted
+  - name: PBS NewsHour
+    feed_url: https://www.pbs.org/newshour/feeds/rss/headlines
+    homepage: https://www.pbs.org/newshour
+    tier: trusted
+
+  # --- questionable: tabloid / sensationalist / mixed-or-low reliability ratings ---
+  - name: Daily Mail
+    feed_url: https://www.dailymail.co.uk/articles.rss
+    homepage: https://www.dailymail.co.uk
+    tier: questionable
+  - name: New York Post
+    feed_url: https://nypost.com/feed/
+    homepage: https://nypost.com
+    tier: questionable
+  - name: ZeroHedge
+    feed_url: https://feeds.feedburner.com/zerohedge/feed
+    homepage: https://www.zerohedge.com
+    tier: questionable
+  - name: Breitbart
+    feed_url: https://feeds.feedburner.com/breitbart
+    homepage: https://www.breitbart.com
+    tier: questionable
+  - name: Natural News
+    feed_url: https://www.naturalnews.com/rss.xml
+    homepage: https://www.naturalnews.com
+    tier: questionable

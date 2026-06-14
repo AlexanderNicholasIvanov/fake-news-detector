@@ -11,7 +11,7 @@ from app.db import Base
 
 # Allowed string values (enforced in app code / validation, not the DB schema).
 REPUTATION_TIERS = ("trusted", "questionable", "unknown")
-EXTRACTION_STATUSES = ("pending", "ok", "failed")
+EXTRACTION_STATUSES = ("pending", "ok", "failed", "duplicate")
 BANDS = ("credible", "questionable", "misleading")
 
 

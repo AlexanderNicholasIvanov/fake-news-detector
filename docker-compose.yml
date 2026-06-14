@@ -33,6 +33,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  worker:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-fnd}:${POSTGRES_PASSWORD:-fnd_dev_password}@db:5432/${POSTGRES_DB:-fakenews}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["python", "-m", "app.worker"]
+
   frontend:
     build: ./frontend
     environment:
