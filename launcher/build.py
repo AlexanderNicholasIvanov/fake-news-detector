@@ -1,10 +1,11 @@
 """Build the launcher binaries with PyInstaller.
 
-Creates an isolated build venv, installs a pinned PyInstaller, and produces two
-single-file executables in the repo root from one source (run_fakenews.py); the
-behaviour is selected at runtime by the executable's name:
+Creates an isolated build venv, installs pinned PyInstaller + pywebview, and
+produces two single-file executables in the repo root from one source
+(run_fakenews.py); behaviour is selected at runtime by the executable's name:
 
-    run-fakenews(.exe)   stop-fakenews(.exe)
+    run-fakenews(.exe)   native desktop window (pywebview / WebView2), windowed
+    stop-fakenews(.exe)  console tool (docker compose down)
 
 Usage:  python launcher/build.py
 """
@@ -18,11 +19,19 @@ import venv
 from pathlib import Path
 
 PYINSTALLER = "pyinstaller==6.21.0"
+PYWEBVIEW = "pywebview==6.2.1"
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 SOURCE = HERE / "run_fakenews.py"
 BUILD = HERE / "_build"
 VENV = BUILD / "venv"
+
+# (name, windowed_app). The app build bundles the webview backend; the console
+# build (lazy-imports webview only at runtime, never reached) stays slim.
+TARGETS = [
+    ("run-fakenews", True),
+    ("stop-fakenews", False),
+]
 
 
 def venv_python(v: Path) -> Path:
@@ -35,23 +44,24 @@ def main() -> int:
     venv.EnvBuilder(with_pip=True, clear=True).create(VENV)
     py = str(venv_python(VENV))
 
-    print(f"[build] installing {PYINSTALLER}")
+    print(f"[build] installing {PYINSTALLER} + {PYWEBVIEW}")
     subprocess.run([py, "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
-    subprocess.run([py, "-m", "pip", "install", "-q", PYINSTALLER], check=True)
+    subprocess.run([py, "-m", "pip", "install", "-q", PYINSTALLER, PYWEBVIEW], check=True)
 
-    for name in ("run-fakenews", "stop-fakenews"):
-        print(f"[build] bundling {name}")
-        subprocess.run(
-            [
-                py, "-m", "PyInstaller", "--onefile", "--clean", "--noconfirm",
-                "--name", name,
-                "--distpath", str(ROOT),
-                "--workpath", str(BUILD / "work"),
-                "--specpath", str(BUILD),
-                str(SOURCE),
-            ],
-            check=True,
-        )
+    for name, windowed in TARGETS:
+        print(f"[build] bundling {name}{' (windowed app)' if windowed else ''}")
+        args = [
+            py, "-m", "PyInstaller", "--onefile", "--clean", "--noconfirm",
+            "--name", name,
+            "--distpath", str(ROOT),
+            "--workpath", str(BUILD / "work"),
+            "--specpath", str(BUILD),
+        ]
+        if windowed:
+            # No console window; pull in the pywebview backend + WebView2 loader.
+            args += ["--windowed", "--collect-all", "webview"]
+        args += [str(SOURCE)]
+        subprocess.run(args, check=True)
 
     print(f"[build] done. Executables written to {ROOT}")
     return 0

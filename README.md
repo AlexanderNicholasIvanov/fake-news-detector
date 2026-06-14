@@ -27,20 +27,28 @@ scoring → dashboard runs end-to-end, with an offline evaluation harness.
     it: set `OLLAMA_HOST=0.0.0.0:11434` on the host and restart Ollama.
 - (For running outside Docker) Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22+
 
-## Quick start (one-click executable)
+## Quick start (desktop app)
 
-Double-click **`run-fakenews.exe`** in the repo root. It runs the preflight
-checks (Docker engine, Ollama + model), creates `.env` if missing, brings the
-stack up, waits for the API to be healthy, and opens the dashboard. Use
-**`stop-fakenews.exe`** to shut everything down.
+Double-click **`run-fakenews.exe`** in the repo root. It opens as a **native
+desktop window** (no browser, no address bar): a loading screen runs the
+preflight checks (Docker engine, Ollama + model), creates `.env` if missing,
+brings the stack up, waits for the API to be healthy, then loads the dashboard
+inside the window. Use **`stop-fakenews.exe`** to shut the stack down.
 
-The launcher is a single dependency-free binary (Python standard library only,
-bundled with PyInstaller). Source: [`launcher/run_fakenews.py`](./launcher/run_fakenews.py).
-Rebuild after editing it with:
+The window uses the Edge **WebView2** runtime (pre-installed on Windows 10/11)
+via [pywebview]; the Docker stack still runs underneath and serves locally, but
+the browser and `localhost` are hidden behind the app window. Closing the window
+leaves the stack running (the worker keeps ingesting) — run `stop-fakenews.exe`
+to stop it.
+
+Both binaries are built from one source ([`launcher/run_fakenews.py`](./launcher/run_fakenews.py))
+with PyInstaller; behaviour is chosen by the executable's name. Rebuild with:
 
 ```bash
 python launcher/build.py   # writes run-fakenews.exe + stop-fakenews.exe to repo root
 ```
+
+[pywebview]: https://pywebview.flowrl.com/
 
 ## Quick start (Docker)
 

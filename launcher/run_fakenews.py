@@ -1,15 +1,17 @@
 """Fake-News Detector launcher.
 
-A single, dependency-free executable (built with PyInstaller - see build.py) that
-brings the whole stack up and opens the dashboard. The SAME source is built into
-two binaries; behaviour is chosen by the executable's own name:
+Built with PyInstaller (see build.py) into two single-file binaries from this one
+source; behaviour is chosen by the executable's own name:
 
-    run-fakenews.exe   -> preflight checks, `docker compose up --build -d`,
-                          wait for the API to be healthy, open the dashboard
-    stop-fakenews.exe  -> `docker compose down`
+    run-fakenews.exe   -> a native desktop window (pywebview / Edge WebView2):
+                          shows a loading screen while it runs preflight checks,
+                          brings the Docker stack up, waits for the API to be
+                          healthy, then loads the dashboard inside the window.
+                          No browser, no console, no address bar.
+    stop-fakenews.exe   -> a small console tool: `docker compose down`.
 
-Only the Python standard library is used, so the frozen exe needs nothing on the
-target machine except Docker (and Ollama for scoring).
+Hidden mode for testing: pass --selfcheck to run the full startup sequence in the
+console (no window) and exit 0/1 — used to validate the frozen exe headlessly.
 """
 
 from __future__ import annotations
@@ -30,36 +32,8 @@ DASHBOARD = "http://localhost:5173"
 OLLAMA_TAGS = "http://localhost:11434/api/tags"
 HEALTH_TIMEOUT_S = 240
 
-
-# ---------------------------------------------------------------- presentation
-def say(prefix: str, msg: str) -> None:
-    print(f" {prefix}  {msg}", flush=True)
-
-
-def ok(msg: str) -> None:
-    say("[OK]", msg)
-
-
-def warn(msg: str) -> None:
-    say("[! ]", msg)
-
-
-def step(msg: str) -> None:
-    say("[..]", msg)
-
-
-def fail_and_exit(msg: str, code: int = 1) -> None:
-    say("[XX]", msg)
-    pause()
-    sys.exit(code)
-
-
-def pause() -> None:
-    # Keep the window open when double-clicked from Explorer.
-    try:
-        input("\nPress Enter to close this window...")
-    except EOFError:
-        pass
+# Don't pop up a console window for each docker subprocess in windowed mode.
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 # ---------------------------------------------------------------- project setup
@@ -93,34 +67,24 @@ def load_env(root: Path) -> dict[str, str]:
 def ensure_env_file(root: Path) -> None:
     env_path = root / ".env"
     example = root / ".env.example"
-    if env_path.exists():
-        ok(".env present")
-    elif example.exists():
+    if not env_path.exists() and example.exists():
         shutil.copyfile(example, env_path)
-        ok("created .env from .env.example")
-    else:
-        warn("no .env or .env.example found - using compose defaults")
 
 
-# ---------------------------------------------------------------- prerequisites
-def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, text=True, **kw)
+# ------------------------------------------------------------ stack control (io)
+def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False):
+    kw: dict = {"text": True, "creationflags": _CREATE_NO_WINDOW}
+    if capture:
+        kw["capture_output"] = True
+    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, **kw)
 
 
-def check_docker() -> None:
-    if shutil.which("docker") is None:
-        fail_and_exit(
-            "Docker is not installed or not on PATH. Install Docker Desktop: "
-            "https://www.docker.com/products/docker-desktop/"
-        )
-    # `docker info` fails fast if the daemon/Desktop isn't running.
-    proc = run(["docker", "info"], capture_output=True)
-    if proc.returncode != 0:
-        fail_and_exit(
-            "Docker is installed but the engine isn't running. "
-            "Start Docker Desktop, wait for it to be ready, then run this again."
-        )
-    ok("Docker engine is running")
+def docker_present() -> bool:
+    return shutil.which("docker") is not None
+
+
+def docker_running() -> bool:
+    return _run(["docker", "info"], capture=True).returncode == 0
 
 
 def http_json(url: str, timeout: float = 4.0):
@@ -128,96 +92,246 @@ def http_json(url: str, timeout: float = 4.0):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def check_ollama(env: dict[str, str]) -> None:
-    """Scoring needs Ollama on the host with the configured model. Non-fatal:
-    the stack still ingests + serves the dashboard without it."""
+def ollama_status(env: dict[str, str]) -> tuple[str, str]:
+    """(level, message): level is 'ok' or 'warn'. Non-fatal — the stack still
+    ingests + serves the dashboard without Ollama; only scoring needs it."""
     model = env.get("SCORING_MODEL", "qwen3:14b")
     try:
         tags = http_json(OLLAMA_TAGS)
     except (urllib.error.URLError, OSError, ValueError):
-        warn(
-            "Ollama not reachable at localhost:11434 - ingestion/dashboard will "
-            "work but scoring will not. Start Ollama with the server bound to all "
-            "interfaces:  set OLLAMA_HOST=0.0.0.0:11434  then restart Ollama."
-        )
-        return
+        return "warn", ("Ollama not reachable - scoring will be idle. Start Ollama "
+                        "with OLLAMA_HOST=0.0.0.0:11434.")
     names = {m.get("name", "") for m in tags.get("models", [])}
     if model in names or any(n.split(":")[0] == model.split(":")[0] for n in names):
-        ok(f"Ollama is running and '{model}' is available")
-    else:
-        warn(
-            f"Ollama is running but '{model}' isn't pulled. Run:  ollama pull {model}"
-        )
+        return "ok", f"Ollama running, '{model}' available"
+    return "warn", f"Ollama running but '{model}' not pulled (run: ollama pull {model})"
 
 
-# ---------------------------------------------------------------- stack control
-def compose_up(root: Path) -> None:
-    step("starting the stack (docker compose up --build -d) - first run pulls images...")
-    proc = run(["docker", "compose", "up", "--build", "-d"], cwd=str(root))
-    if proc.returncode != 0:
-        fail_and_exit("`docker compose up` failed (see output above).")
-    ok("containers started")
+def compose_up(root: Path) -> tuple[bool, str]:
+    proc = _run(["docker", "compose", "up", "--build", "-d"], cwd=root, capture=True)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode == 0, out
 
 
-def wait_for_health(root: Path) -> bool:
-    step(f"waiting for the API to be healthy (up to {HEALTH_TIMEOUT_S}s)...")
-    deadline = time.monotonic() + HEALTH_TIMEOUT_S
+def compose_down(root: Path) -> tuple[bool, str]:
+    proc = _run(["docker", "compose", "down"], cwd=root, capture=True)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode == 0, out
+
+
+def wait_for_health(timeout_s: int = HEALTH_TIMEOUT_S) -> bool:
+    deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            data = http_json(API_HEALTH, timeout=3.0)
-            if data.get("status") == "ok":
-                ok("API is healthy")
+            if http_json(API_HEALTH, timeout=3.0).get("status") == "ok":
                 return True
         except (urllib.error.URLError, OSError, ValueError):
             pass
-        print("    .", end="", flush=True)
-        time.sleep(3)
-    print()
-    warn("API didn't report healthy in time. It may still be starting - check "
-         "`docker compose logs api`. Opening the dashboard anyway.")
+        time.sleep(2)
     return False
 
 
-def do_run(root: Path) -> None:
-    print("\n  Fake-News Detector - launcher\n  " + "=" * 30 + "\n")
+# ----------------------------------------------------------------- app (window)
+_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  html,body { margin:0; height:100%; background:#0f172a; color:#e2e8f0;
+    font-family:'Segoe UI',system-ui,sans-serif; }
+  .wrap { height:100%; display:flex; align-items:center; justify-content:center; }
+  .card { width:520px; padding:36px 40px; }
+  .brand { font-size:22px; font-weight:600; letter-spacing:.2px; }
+  .brand .dot { color:#38bdf8; }
+  .sub { color:#94a3b8; font-size:13px; margin-top:4px; margin-bottom:26px; }
+  ul { list-style:none; padding:0; margin:0; }
+  li { display:flex; align-items:flex-start; gap:12px; padding:7px 0; font-size:14px; }
+  .ico { width:18px; height:18px; flex:none; margin-top:1px; border-radius:50%;
+    display:inline-block; }
+  .pending .ico { border:2px solid #334155; border-top-color:#38bdf8;
+    animation:spin .8s linear infinite; }
+  .ok .ico { background:#22c55e; }
+  .warn .ico { background:#f59e0b; }
+  .err .ico { background:#ef4444; }
+  .ok .txt { color:#cbd5e1; } .pending .txt { color:#e2e8f0; }
+  .warn .txt { color:#fbbf24; } .err .txt { color:#fca5a5; }
+  .hint { margin-top:22px; font-size:12px; color:#64748b; white-space:pre-wrap; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style></head><body><div class="wrap"><div class="card">
+  <div class="brand">Fake-News <span class="dot">Detector</span></div>
+  <div class="sub">starting up&hellip;</div>
+  <ul>__ROWS__</ul>
+  <div class="hint">__HINT__</div>
+</div></div></body></html>"""
+
+_STATE_CLASS = {"..": "pending", "ok": "ok", "warn": "warn", "err": "err"}
+
+
+class AppUI:
+    """Renders the loading screen into the pywebview window as steps progress."""
+
+    def __init__(self) -> None:
+        self.window = None
+        self.steps: list[list[str]] = []  # [state, text]
+        self.hint = ""
+
+    def _render(self) -> None:
+        rows = "".join(
+            f'<li class="{_STATE_CLASS.get(s, "pending")}">'
+            f'<span class="ico"></span><span class="txt">{t}</span></li>'
+            for s, t in self.steps
+        )
+        html = _PAGE.replace("__ROWS__", rows).replace("__HINT__", self.hint)
+        if self.window is not None:
+            self.window.load_html(html)
+
+    def initial_html(self) -> str:
+        return _PAGE.replace("__ROWS__", "").replace("__HINT__", "")
+
+    def begin(self, text: str) -> None:
+        self.steps.append(["..", text])
+        self._render()
+
+    def set_last(self, state: str, text: str | None = None) -> None:
+        if not self.steps:
+            self.steps.append([state, text or ""])
+        else:
+            self.steps[-1][0] = state
+            if text is not None:
+                self.steps[-1][1] = text
+        self._render()
+
+    def add(self, state: str, text: str) -> None:
+        self.steps.append([state, text])
+        self._render()
+
+    def set_hint(self, text: str) -> None:
+        self.hint = text
+        self._render()
+
+
+def _message_box(title: str, text: str) -> None:
+    """Last-resort native dialog if the webview itself can't start (Windows)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
+            return
+        except Exception:
+            pass
+    print(f"{title}: {text}", file=sys.stderr)
+
+
+def do_app(root: Path) -> None:
+    try:
+        import webview  # lazy: only the run binary bundles this
+    except Exception as exc:  # pragma: no cover - bundling/runtime guard
+        _message_box(
+            "Fake-News Detector",
+            f"Could not start the app window ({exc}).\n\n"
+            "Opening the dashboard in your browser instead once it's ready.",
+        )
+        ensure_env_file(root)
+        if docker_present() and docker_running():
+            compose_up(root)
+            wait_for_health()
+        webbrowser.open(DASHBOARD)
+        return
+
+    env = load_env(root)
+    ui = AppUI()
+    window = webview.create_window(
+        "Fake-News Detector", html=ui.initial_html(), width=1180, height=820,
+        min_size=(900, 600),
+    )
+    ui.window = window
+
+    def worker() -> None:
+        try:
+            ensure_env_file(root)
+
+            ui.begin("Checking Docker engine")
+            if not docker_present():
+                ui.set_last("err", "Docker is not installed or not on PATH")
+                ui.set_hint("Install Docker Desktop, then reopen this app:\n"
+                            "https://www.docker.com/products/docker-desktop/")
+                return
+            if not docker_running():
+                ui.set_last("err", "Docker engine isn't running")
+                ui.set_hint("Start Docker Desktop, wait until it's ready, then "
+                            "reopen this app.")
+                return
+            ui.set_last("ok", "Docker engine running")
+
+            ui.begin("Checking Ollama + model")
+            level, msg = ollama_status(env)
+            ui.set_last("ok" if level == "ok" else "warn", msg)
+
+            ui.begin("Starting containers (first run builds images - can take minutes)")
+            ok, out = compose_up(root)
+            if not ok:
+                ui.set_last("err", "Failed to start containers")
+                ui.set_hint(out[-700:].strip())
+                return
+            ui.set_last("ok", "Containers started")
+
+            ui.begin("Waiting for the API to be healthy")
+            if wait_for_health():
+                ui.set_last("ok", "API healthy")
+            else:
+                ui.set_last("warn", "API slow to start - loading anyway")
+
+            ui.add("..", "Loading dashboard")
+            window.load_url(DASHBOARD)
+        except Exception as exc:  # never leave the window stuck on a spinner
+            ui.add("err", f"Startup error: {exc!r}")
+
+    webview.start(worker)
+
+
+# --------------------------------------------------------------- console modes
+def do_stop(root: Path) -> int:
+    print("\n  Fake-News Detector - stopping\n  " + "=" * 30 + "\n")
+    if not docker_present():
+        print(" [XX]  Docker is not on PATH.")
+        input("\nPress Enter to close this window...")
+        return 1
+    ok, out = compose_down(root)
+    print(out.rstrip())
+    print(" [OK]  stack stopped." if ok else " [XX]  `docker compose down` failed.")
+    input("\nPress Enter to close this window...")
+    return 0 if ok else 1
+
+
+def do_selfcheck(root: Path) -> int:
+    """Run the full startup sequence in the console (no window). For testing."""
+    print("[selfcheck] root:", root)
     ensure_env_file(root)
     env = load_env(root)
-    check_docker()
-    check_ollama(env)
-    compose_up(root)
-    wait_for_health(root)
-    step(f"opening the dashboard at {DASHBOARD}")
-    webbrowser.open(DASHBOARD)
-    print()
-    ok("Up and running.")
-    print(f"""
-  Dashboard : {DASHBOARD}
-  API docs  : http://localhost:8000/docs
-  Logs      : docker compose logs -f worker
-  Stop      : run stop-fakenews.exe  (or: docker compose down)
-""")
-    pause()
+    if not docker_present():
+        print("[selfcheck] FAIL: docker not found"); return 1
+    if not docker_running():
+        print("[selfcheck] FAIL: docker engine not running"); return 1
+    print("[selfcheck] docker ok")
+    print("[selfcheck] ollama:", ollama_status(env))
+    ok, _ = compose_up(root)
+    print("[selfcheck] compose up:", "ok" if ok else "FAIL")
+    if not ok:
+        return 1
+    healthy = wait_for_health()
+    print("[selfcheck] api healthy:", healthy)
+    return 0 if healthy else 1
 
 
-def do_stop(root: Path) -> None:
-    print("\n  Fake-News Detector - stopping\n  " + "=" * 30 + "\n")
-    if shutil.which("docker") is None:
-        fail_and_exit("Docker is not on PATH.")
-    proc = run(["docker", "compose", "down"], cwd=str(root))
-    if proc.returncode != 0:
-        fail_and_exit("`docker compose down` failed (see output above).")
-    ok("stack stopped.")
-    pause()
-
-
-def main() -> None:
+def main() -> int:
     root = find_project_root()
     exe_name = Path(sys.argv[0]).stem.lower()
+    if "--selfcheck" in sys.argv:
+        return do_selfcheck(root)
     if "stop" in exe_name:
-        do_stop(root)
-    else:
-        do_run(root)
+        return do_stop(root)
+    do_app(root)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
