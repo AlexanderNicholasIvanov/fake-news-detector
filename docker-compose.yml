@@ -53,6 +53,10 @@ services:
       VITE_API_PROXY: http://api:8000
     ports:
       - "5173:5173"
+    # Dev hot-reload: mount source, keep the image's node_modules.
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - api
 

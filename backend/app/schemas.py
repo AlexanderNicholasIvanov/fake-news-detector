@@ -26,6 +26,25 @@ class ArticleOut(BaseModel):
     url: str
     title: str | None = None
     source_name: str | None = None
+    source_tier: str | None = None
     published_at: datetime | None = None
     extraction_status: str
     latest_score: ScoreOut | None = None
+
+
+class ArticleDetailOut(ArticleOut):
+    full_text: str | None = None
+
+
+class SourceOut(BaseModel):
+    id: int
+    name: str
+    reputation_tier: str
+    article_count: int = 0
+
+
+class StatsOut(BaseModel):
+    total_articles: int
+    extracted: int
+    scored: int
+    bands: dict[str, int]
