@@ -6,14 +6,18 @@ stores results in Postgres, and surfaces them in a React dashboard.
 
 See [`PLAN.md`](./PLAN.md) for the full design and milestone breakdown.
 
-**Status: MVP complete (M0–M4).** Ingestion → local-LLM scoring → dashboard runs
-end-to-end, with an offline evaluation harness.
+**Status: MVP complete (M0–M4) + Phase 2 corroboration.** Ingestion → local-LLM
+scoring → dashboard runs end-to-end, with an offline evaluation harness.
 
 - **M0** scaffold (Postgres + Alembic, FastAPI, Vite/React/Tailwind, Docker)
 - **M1** RSS ingestion (discovery, dedup, `trafilatura` full-text, APScheduler worker)
 - **M2** credibility scoring (Ollama + `qwen3:14b`, structured output, soft blend)
 - **M3** dashboard (filters, stats, pagination, signal-breakdown detail view)
 - **M4** evaluation (golden set + regression harness)
+- **Phase 2** cross-source corroboration — an event independently reported by
+  other outlets (especially trusted ones) lifts the score; a lexical candidate
+  filter feeds an LLM "same event?" adjudicator. Positive-only: an uncorroborated
+  exclusive is never penalized, so uncorroborated articles score exactly as in M2.
 
 ## Prerequisites
 

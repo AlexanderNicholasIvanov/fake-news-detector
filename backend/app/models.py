@@ -60,6 +60,9 @@ class Score(Base):
     reputation_subscore: Mapped[int] = mapped_column(Integer)
     content_subscore: Mapped[int] = mapped_column(Integer)
     corroboration_subscore: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Phase 2: which other-source articles corroborate this event (nullable JSONB);
+    # null/[] = no corroboration found, so corroboration was excluded from the blend.
+    corroboration: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     red_flags: Mapped[list] = mapped_column(JSONB, default=list)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str] = mapped_column(String(128))

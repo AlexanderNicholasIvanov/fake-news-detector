@@ -32,8 +32,21 @@ def test_fuse_clamps_to_0_100() -> None:
     assert fuse(0, 0)[0] == 0
 
 
-def test_fuse_renormalizes_when_corroboration_present() -> None:
-    # with corroboration supplied, its weight (0.0 default) is added to the
-    # denominator; with weight 0 the result is unchanged from the 2-signal blend
+def test_fuse_uncorroborated_matches_legacy_6040_blend() -> None:
+    # No-regression guard: with corroboration absent, the content:reputation
+    # weights (0.51:0.34) renormalize to exactly 0.6:0.4, so uncorroborated
+    # articles score identically to the MVP — keeps the eval/audit valid.
+    assert fuse(80, 85)[0] == 82          # round(0.6*80 + 0.4*85)
+    assert fuse(95, 25)[0] == 67          # clean content, questionable source
+
+
+def test_fuse_corroboration_is_applied_when_present() -> None:
+    # Phase 2 weights 0.51/0.34/0.15. Corroboration is a positive-only signal.
     final, _ = fuse(80, 85, corroboration_subscore=50)
-    assert final == 82
+    assert final == 77  # round(0.51*80 + 0.34*85 + 0.15*50)
+
+
+def test_fuse_corroboration_lifts_a_borderline_score() -> None:
+    base = fuse(50, 25)[0]                          # uncorroborated → 40 (misleading)
+    lifted = fuse(50, 25, corroboration_subscore=84)[0]  # widely corroborated
+    assert lifted > base and lifted >= 40

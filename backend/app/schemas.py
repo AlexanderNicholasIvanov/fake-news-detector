@@ -13,6 +13,7 @@ class ScoreOut(BaseModel):
     reputation_subscore: int
     content_subscore: int
     corroboration_subscore: int | None = None
+    corroboration: dict | None = None
     red_flags: list = []
     rationale: str | None = None
     model_name: str

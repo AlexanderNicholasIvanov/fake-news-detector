@@ -8,12 +8,29 @@ export interface RedFlag {
 
 export type Band = "credible" | "questionable" | "misleading";
 
+export interface CorroborationMatch {
+  article_id: number;
+  source_id: number;
+  source_name: string;
+  tier: string;
+  title: string | null;
+}
+
+export interface Corroboration {
+  distinct_sources: number;
+  any_trusted: boolean;
+  base: number;
+  trusted_bonus: number;
+  matched: CorroborationMatch[];
+}
+
 export interface Score {
   final_score: number;
   band: Band;
   reputation_subscore: number;
   content_subscore: number;
   corroboration_subscore: number | null;
+  corroboration: Corroboration | null;
   red_flags: RedFlag[];
   rationale: string | null;
   model_name: string;

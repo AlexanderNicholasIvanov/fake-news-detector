@@ -22,4 +22,5 @@ BANDS: dict = _scoring.get("bands", {"credible": 70, "questionable": 40})
 REPUTATION_SUBSCORES: dict = _scoring.get(
     "reputation_subscores", {"trusted": 85, "unknown": 50, "questionable": 25}
 )
+CORROBORATION: dict = _scoring.get("corroboration", {}) or {}
 DOMAIN_OVERRIDES: dict = _reputation.get("overrides", {}) or {}

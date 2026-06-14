@@ -2,9 +2,12 @@
 model: qwen3:14b
 
 weights:
-  content: 0.6
-  reputation: 0.4
-  corroboration: 0.0   # Phase 2 placeholder
+  # content:reputation kept at 6:4 — when corroboration is absent the blend
+  # renormalizes to exactly 0.6/0.4, so uncorroborated articles score the same
+  # as the MVP (no regression; the golden-set eval and live audit stay valid).
+  content: 0.51
+  reputation: 0.34
+  corroboration: 0.15   # Phase 2: applied only when corroboration is found
 
 bands:
   # final_score >= threshold -> band (evaluated high to low)
@@ -16,3 +19,18 @@ reputation_subscores:
   trusted: 85
   unknown: 50
   questionable: 25
+
+# Phase 2 — cross-source corroboration. A story independently reported by other
+# outlets (especially trusted ones) is more credible. This signal can only LIFT
+# a score: no corroboration => subscore null => excluded from the blend, so a
+# legitimate single-source exclusive is never penalized for being uncorroborated.
+corroboration:
+  window_hours: 72        # match against articles published within +/- this window
+  max_candidates: 8       # cap candidates sent to the LLM adjudicator
+  min_overlap: 0.10       # Jaccard token-overlap floor for a lexical candidate
+  lead_chars: 300         # chars of body text used for matching + adjudication
+  trusted_bonus: 8        # added when any corroborating source is 'trusted'
+  subscore_by_sources:    # subscore by number of distinct corroborating sources
+    "1": 62
+    "2": 74
+    "3": 84               # 3+ uses this value

@@ -94,8 +94,20 @@ separately so weights can be re-tuned without re-running the LLM.
 
 ## Phase 2 (post-MVP)
 
-Corroboration (event-matching via embeddings/title-overlap → LLM "do these
-align?"), optional alerting, Haiku/cloud A/B behind the model flag.
+**Corroboration — implemented.** `scoring/corroboration.py`: a lexical candidate
+filter (significant-token Jaccard over title+lead, within a ±72h window, other
+sources only) feeds an LLM "do these report the same event?" adjudicator; the
+number of distinct corroborating sources (with a trusted-source bonus) becomes a
+corroboration subscore. It is **positive-only** — no corroboration → `None` →
+excluded from the blend, so an uncorroborated exclusive is never penalized.
+Weights are tuned (`content 0.51 / reputation 0.34 / corroboration 0.15`) so that
+the uncorroborated blend renormalizes to exactly the MVP's 0.6/0.4 — no
+regression (golden-set eval unchanged at 88%). Evidence (matched articles) is
+stored in `scores.corroboration` (JSONB) and shown in the dashboard breakdown.
+
+Future: candidate recall via embeddings (catches paraphrased headlines the
+lexical filter misses), retroactive re-scoring when later coverage corroborates
+an older article, optional alerting, Haiku/cloud A/B behind the model flag.
 
 ## Cross-cutting
 

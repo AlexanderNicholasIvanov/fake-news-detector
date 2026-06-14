@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models import Article, Score, Source
 from app.scoring.content import score_content
+from app.scoring.corroboration import score_corroboration
 from app.scoring.fuse import fuse
 from app.scoring.reputation import reputation_subscore
 from app.scoring.settings import MODEL, WEIGHTS
 
 
 def _unscored(session: Session, limit: int) -> list[tuple]:
-    """(article_id, title, full_text, url, reputation_tier) for ok+unscored articles."""
+    """ok+unscored articles, with the fields content + corroboration scoring need."""
     stmt = (
         select(
             Article.id,
@@ -23,6 +24,8 @@ def _unscored(session: Session, limit: int) -> list[tuple]:
             Article.full_text,
             Article.url,
             Source.reputation_tier,
+            Article.source_id,
+            func.coalesce(Article.published_at, Article.created_at),
         )
         .join(Source, Source.id == Article.source_id)
         .outerjoin(Score, Score.article_id == Article.id)
@@ -44,7 +47,7 @@ async def score_pending(limit: int) -> int:
 
     scored = 0
     async with httpx.AsyncClient() as client:
-        for article_id, title, text, url, tier in rows:
+        for article_id, title, text, url, tier, source_id, when in rows:
             try:
                 result = await score_content(client, title, text)
             except Exception as exc:
@@ -55,7 +58,22 @@ async def score_pending(limit: int) -> int:
                 continue
 
             rep_subscore, _ = reputation_subscore(tier, url)
-            final, band = fuse(result["content_subscore"], rep_subscore)
+
+            # Phase 2: cross-source corroboration (positive-only; None if no match).
+            corro_subscore, corro_evidence = None, None
+            try:
+                article = {
+                    "id": article_id, "title": title, "full_text": text,
+                    "source_id": source_id, "when": when,
+                }
+                with SessionLocal() as session:
+                    corro_subscore, corro_evidence = await score_corroboration(
+                        session, client, article
+                    )
+            except Exception as exc:
+                print(f"[score] corroboration error id={article_id}: {exc}", flush=True)
+
+            final, band = fuse(result["content_subscore"], rep_subscore, corro_subscore)
 
             with SessionLocal() as session:
                 session.add(
@@ -65,7 +83,8 @@ async def score_pending(limit: int) -> int:
                         band=band,
                         reputation_subscore=rep_subscore,
                         content_subscore=result["content_subscore"],
-                        corroboration_subscore=None,
+                        corroboration_subscore=corro_subscore,
+                        corroboration=corro_evidence,
                         red_flags=result["red_flags"],
                         rationale=result["rationale"],
                         model_name=MODEL,
