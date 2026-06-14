@@ -1,9 +1,10 @@
-import type { Article, ArticleDetail, Source, Stats } from "../types";
+import type { Article, ArticleDetail, Source, Stats, Topic } from "../types";
 
 // Requests go to /api/* and are proxied to the backend by Vite (see vite.config.ts).
 
 export interface ArticleQuery {
   band?: string;
+  topic?: string;
   source_id?: number;
   min_score?: number;
   order?: "recent" | "score_desc" | "score_asc";
@@ -25,6 +26,10 @@ export function fetchArticle(id: number): Promise<ArticleDetail> {
 
 export function fetchSources(): Promise<Source[]> {
   return getJSON("/api/sources");
+}
+
+export function fetchTopics(): Promise<Topic[]> {
+  return getJSON("/api/topics");
 }
 
 export function fetchStats(): Promise<Stats> {

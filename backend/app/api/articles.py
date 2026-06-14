@@ -43,6 +43,7 @@ def _to_out(article: Article, score: Score | None, *, detail: bool = False) -> A
 @router.get("", response_model=list[ArticleOut])
 def list_articles(
     band: str | None = Query(None, description="credible | questionable | misleading"),
+    topic: str | None = Query(None, description="filter by classified topic"),
     source_id: int | None = None,
     min_score: int | None = Query(None, ge=0, le=100),
     status: str | None = Query("ok", description="extraction_status filter; null for any"),
@@ -63,6 +64,8 @@ def list_articles(
         stmt = stmt.where(Article.source_id == source_id)
     if band:
         stmt = stmt.where(Score.band == band)
+    if topic:
+        stmt = stmt.where(Score.topic == topic)
     if min_score is not None:
         stmt = stmt.where(Score.final_score >= min_score)
 

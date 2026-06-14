@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchArticles, fetchSources, fetchStats, type ArticleQuery } from "../api/client";
-import type { Article, Source, Stats } from "../types";
+import {
+  fetchArticles,
+  fetchSources,
+  fetchStats,
+  fetchTopics,
+  type ArticleQuery,
+} from "../api/client";
+import type { Article, Source, Stats, Topic } from "../types";
 import ScoreCard from "../components/ScoreCard";
 import StatsHeader from "../components/StatsHeader";
 import FilterBar from "../components/FilterBar";
@@ -10,6 +16,7 @@ const PAGE_SIZE = 50;
 
 export default function Feed() {
   const [sources, setSources] = useState<Source[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [articles, setArticles] = useState<Article[]>([]);
   const [query, setQuery] = useState<ArticleQuery>({ order: "recent" });
@@ -20,6 +27,7 @@ export default function Feed() {
 
   useEffect(() => {
     fetchSources().then(setSources).catch(() => {});
+    fetchTopics().then(setTopics).catch(() => {});
     fetchStats().then(setStats).catch(() => {});
   }, []);
 
@@ -46,7 +54,7 @@ export default function Feed() {
       <StatsHeader stats={stats} />
 
       <div className="flex items-center justify-between">
-        <FilterBar sources={sources} query={query} onChange={patchQuery} />
+        <FilterBar sources={sources} topics={topics} query={query} onChange={patchQuery} />
         <button
           onClick={() => {
             fetchStats().then(setStats).catch(() => {});
@@ -66,6 +74,7 @@ export default function Feed() {
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
               <th className="px-4 py-2 font-medium">Title</th>
               <th className="px-4 py-2 font-medium">Source</th>
+              <th className="px-4 py-2 font-medium">Topic</th>
               <th className="px-4 py-2 font-medium">Credibility</th>
             </tr>
           </thead>
@@ -81,13 +90,22 @@ export default function Feed() {
                 </td>
                 <td className="px-4 py-2.5 text-slate-500">{a.source_name ?? "—"}</td>
                 <td className="px-4 py-2.5">
+                  {a.latest_score?.topic ? (
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-xs capitalize text-slate-600">
+                      {a.latest_score.topic}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5">
                   <ScoreCard score={a.latest_score} />
                 </td>
               </tr>
             ))}
             {!loading && articles.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
                   No articles match these filters.
                 </td>
               </tr>

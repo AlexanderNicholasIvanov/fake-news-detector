@@ -1,8 +1,9 @@
-import type { Source } from "../types";
+import type { Source, Topic } from "../types";
 import type { ArticleQuery } from "../api/client";
 
 interface Props {
   sources: Source[];
+  topics: Topic[];
   query: ArticleQuery;
   onChange: (patch: Partial<ArticleQuery>) => void;
 }
@@ -10,7 +11,7 @@ interface Props {
 const selectCls =
   "rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-slate-500 focus:outline-none";
 
-export default function FilterBar({ sources, query, onChange }: Props) {
+export default function FilterBar({ sources, topics, query, onChange }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <select
@@ -22,6 +23,19 @@ export default function FilterBar({ sources, query, onChange }: Props) {
         <option value="credible">Credible</option>
         <option value="questionable">Questionable</option>
         <option value="misleading">Misleading</option>
+      </select>
+
+      <select
+        className={selectCls}
+        value={query.topic ?? ""}
+        onChange={(e) => onChange({ topic: e.target.value || undefined })}
+      >
+        <option value="">All topics</option>
+        {topics.map((t) => (
+          <option key={t.topic} value={t.topic}>
+            {t.topic.charAt(0).toUpperCase() + t.topic.slice(1)} ({t.count})
+          </option>
+        ))}
       </select>
 
       <select

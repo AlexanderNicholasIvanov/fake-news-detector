@@ -57,6 +57,7 @@ class Score(Base):
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"))
     final_score: Mapped[int] = mapped_column(Integer)
     band: Mapped[str] = mapped_column(String(32))
+    topic: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     reputation_subscore: Mapped[int] = mapped_column(Integer)
     content_subscore: Mapped[int] = mapped_column(Integer)
     corroboration_subscore: Mapped[int | None] = mapped_column(Integer, nullable=True)

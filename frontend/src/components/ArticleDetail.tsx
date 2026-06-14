@@ -67,6 +67,11 @@ export default function ArticleDetail({
                     {detail.source_tier}
                   </span>
                 )}
+                {detail.latest_score?.topic && (
+                  <span className="ml-2 rounded bg-sky-50 px-1.5 py-0.5 text-xs capitalize text-sky-700">
+                    {detail.latest_score.topic}
+                  </span>
+                )}
               </p>
             </div>
 

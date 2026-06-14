@@ -27,6 +27,7 @@ export interface Corroboration {
 export interface Score {
   final_score: number;
   band: Band;
+  topic: string | null;
   reputation_subscore: number;
   content_subscore: number;
   corroboration_subscore: number | null;
@@ -64,4 +65,9 @@ export interface Stats {
   extracted: number;
   scored: number;
   bands: Record<string, number>;
+}
+
+export interface Topic {
+  topic: string;
+  count: number;
 }

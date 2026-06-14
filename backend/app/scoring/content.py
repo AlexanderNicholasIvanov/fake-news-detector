@@ -7,7 +7,7 @@ import json
 import httpx
 
 from app.config import settings
-from app.scoring.prompt import CONTENT_SCHEMA, SYSTEM_PROMPT, build_user_prompt
+from app.scoring.prompt import CONTENT_SCHEMA, SYSTEM_PROMPT, TOPICS, build_user_prompt
 from app.scoring.settings import MODEL
 
 REQUEST_TIMEOUT = 180.0
@@ -43,8 +43,10 @@ async def score_content(
     subscore = obj.get("content_subscore")
     if not isinstance(subscore, int):
         return None
+    topic = obj.get("topic")
     return {
         "content_subscore": max(0, min(100, subscore)),
         "red_flags": obj.get("red_flags") or [],
         "rationale": (obj.get("rationale") or "").strip(),
+        "topic": topic if topic in TOPICS else "other",
     }

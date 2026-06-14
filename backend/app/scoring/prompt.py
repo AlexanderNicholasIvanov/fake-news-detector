@@ -1,5 +1,21 @@
 """System rubric + JSON schema for content credibility scoring."""
 
+# Fixed news taxonomy the model classifies each article into (used for the topic
+# column + filter). "other" is the catch-all so the enum stays closed.
+TOPICS = [
+    "politics",
+    "world",
+    "business",
+    "technology",
+    "science",
+    "health",
+    "environment",
+    "sports",
+    "entertainment",
+    "crime",
+    "other",
+]
+
 RED_FLAG_TYPES = [
     "clickbait",
     "sensationalism",
@@ -29,6 +45,9 @@ lack_of_evidence, biased_language, other
     - severity: low, medium, or high
     - evidence: a short quote or paraphrase from the article showing the issue
 - rationale: one concise paragraph (2-4 sentences) explaining the score.
+- topic: the single best-fitting subject from this fixed list — politics, world, \
+business, technology, science, health, environment, sports, entertainment, crime, \
+other. Use "other" only when none clearly fits. This is independent of credibility.
 
 Be specific and fair. Few or no red flags should yield a high score; multiple \
 high-severity flags should yield a low score. Base every red flag on something \
@@ -52,8 +71,9 @@ CONTENT_SCHEMA = {
             },
         },
         "rationale": {"type": "string"},
+        "topic": {"type": "string", "enum": TOPICS},
     },
-    "required": ["content_subscore", "red_flags", "rationale"],
+    "required": ["content_subscore", "red_flags", "rationale", "topic"],
 }
 
 

@@ -81,6 +81,7 @@ async def score_pending(limit: int) -> int:
                         article_id=article_id,
                         final_score=final,
                         band=band,
+                        topic=result["topic"],
                         reputation_subscore=rep_subscore,
                         content_subscore=result["content_subscore"],
                         corroboration_subscore=corro_subscore,

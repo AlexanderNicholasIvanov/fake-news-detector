@@ -11,8 +11,10 @@ scoring → dashboard runs end-to-end, with an offline evaluation harness.
 
 - **M0** scaffold (Postgres + Alembic, FastAPI, Vite/React/Tailwind, Docker)
 - **M1** RSS ingestion (discovery, dedup, `trafilatura` full-text, APScheduler worker)
-- **M2** credibility scoring (Ollama + `qwen3:14b`, structured output, soft blend)
-- **M3** dashboard (filters, stats, pagination, signal-breakdown detail view)
+- **M2** credibility scoring (Ollama + `qwen3:14b`, structured output, soft blend);
+  the content pass also classifies each article into a fixed **topic** taxonomy
+- **M3** dashboard (filter by band/source/**topic**, stats, pagination, signal
+  breakdown + topic column/detail view)
 - **M4** evaluation (golden set + regression harness)
 - **Phase 2** cross-source corroboration — an event independently reported by
   other outlets (especially trusted ones) lifts the score; a lexical candidate

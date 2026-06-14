@@ -8,9 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import Article, Score, Source
-from app.schemas import SourceOut, StatsOut
+from app.schemas import SourceOut, StatsOut, TopicOut
 
 router = APIRouter(prefix="/api", tags=["meta"])
+
+
+def _latest_score_ids():
+    """Subquery of the latest score id per article (max id == latest insert)."""
+    return select(func.max(Score.id).label("sid")).group_by(Score.article_id).subquery()
 
 
 @router.get("/sources", response_model=list[SourceOut])
@@ -34,9 +39,7 @@ def stats(session: Session = Depends(get_session)) -> StatsOut:
         select(func.count()).select_from(Article).where(Article.extraction_status == "ok")
     ) or 0
     # latest score per article, then count by band
-    latest = (
-        select(func.max(Score.id).label("sid")).group_by(Score.article_id).subquery()
-    )
+    latest = _latest_score_ids()
     band_rows = session.execute(
         select(Score.band, func.count())
         .where(Score.id.in_(select(latest.c.sid)))
@@ -45,3 +48,16 @@ def stats(session: Session = Depends(get_session)) -> StatsOut:
     bands = {band: count for band, count in band_rows}
     scored = sum(bands.values())
     return StatsOut(total_articles=total, extracted=extracted, scored=scored, bands=bands)
+
+
+@router.get("/topics", response_model=list[TopicOut])
+def list_topics(session: Session = Depends(get_session)) -> list[TopicOut]:
+    """Topics present among the latest scores, with counts (for the filter)."""
+    latest = _latest_score_ids()
+    rows = session.execute(
+        select(Score.topic, func.count())
+        .where(Score.id.in_(select(latest.c.sid)), Score.topic.is_not(None))
+        .group_by(Score.topic)
+        .order_by(func.count().desc())
+    ).all()
+    return [TopicOut(topic=topic, count=count) for topic, count in rows]

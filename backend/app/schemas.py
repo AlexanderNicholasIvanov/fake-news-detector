@@ -10,6 +10,7 @@ class ScoreOut(BaseModel):
 
     final_score: int
     band: str
+    topic: str | None = None
     reputation_subscore: int
     content_subscore: int
     corroboration_subscore: int | None = None
@@ -49,3 +50,8 @@ class StatsOut(BaseModel):
     extracted: int
     scored: int
     bands: dict[str, int]
+
+
+class TopicOut(BaseModel):
+    topic: str
+    count: int
