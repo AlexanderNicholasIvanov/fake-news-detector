@@ -19,6 +19,7 @@ from app.db import SessionLocal
 from app.ingest.extract import extract_many
 from app.ingest.feeds import discover_new_articles, load_sources
 from app.models import Article
+from app.scoring.runner import score_pending
 
 
 def _wait_for_db(retries: int = 30, delay: float = 2.0) -> None:
@@ -83,7 +84,11 @@ async def run_cycle() -> None:
         with SessionLocal() as session:
             new = await asyncio.to_thread(discover_new_articles, session)
         extracted = await _extract_pending()
-        print(f"[worker] cycle done: {new} new, {extracted} extracted", flush=True)
+        scored = await score_pending(settings.score_batch_size)
+        print(
+            f"[worker] cycle done: {new} new, {extracted} extracted, {scored} scored",
+            flush=True,
+        )
     except Exception as exc:  # never let a bad cycle kill the loop
         print(f"[worker] cycle error: {exc}", flush=True)
 
