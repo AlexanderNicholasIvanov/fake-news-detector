@@ -8,7 +8,13 @@ import hashlib
 import httpx
 import trafilatura
 
-USER_AGENT = "Mozilla/5.0 (compatible; FakeNewsDetector/0.1; +https://localhost)"
+# Some publishers (e.g. NPR) silently hang or block an obviously-bot User-Agent,
+# so present as a mainstream desktop browser. This is a public-page GET, not
+# evasion of auth or paywalls — it just avoids naive bot filters.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 FETCH_TIMEOUT = 20.0
 
 
