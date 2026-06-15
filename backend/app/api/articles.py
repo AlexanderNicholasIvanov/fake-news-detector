@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_session
 from app.models import Article, Score
@@ -57,6 +57,9 @@ def list_articles(
         select(Article, Score)
         .join(latest, latest.c.aid == Article.id, isouter=True)
         .join(Score, Score.id == latest.c.sid, isouter=True)
+        # eager-load Source so _to_out's `article.source.name` doesn't fire one
+        # extra query per row (N+1 across the page).
+        .options(selectinload(Article.source))
     )
     if status:
         stmt = stmt.where(Article.extraction_status == status)
