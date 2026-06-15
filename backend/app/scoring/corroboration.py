@@ -28,7 +28,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Article, Source
+from app.models import Article, ArticleEmbedding, Source
+from app.scoring.embeddings import embed, embed_text
 from app.scoring.settings import CORROBORATION, MODEL
 
 REQUEST_TIMEOUT = 180.0
@@ -151,6 +152,72 @@ def find_candidates(
     return scored[:cap]
 
 
+def _vector_candidates(
+    session: Session, article: dict, target_vec: list[float]
+) -> list[dict]:
+    """Cosine nearest-neighbour candidates in the same window/other-source filter.
+
+    Catches paraphrased coverage the lexical token-overlap filter misses. Same
+    dict shape as `find_candidates`, with a `similarity` field instead of `overlap`.
+    """
+    window = timedelta(hours=int(CORROBORATION.get("window_hours", 72)))
+    k = int(CORROBORATION.get("embedding_candidates", 8))
+    min_sim = float(CORROBORATION.get("min_similarity", 0.55))
+
+    when = article["when"]
+    ts = func.coalesce(Article.published_at, Article.created_at)
+    distance = ArticleEmbedding.embedding.cosine_distance(target_vec)
+    rows = session.execute(
+        select(
+            Article.id,
+            Article.title,
+            Article.full_text,
+            Article.source_id,
+            Source.name,
+            Source.reputation_tier,
+            distance.label("dist"),
+        )
+        .join(Source, Source.id == Article.source_id)
+        .join(ArticleEmbedding, ArticleEmbedding.article_id == Article.id)
+        .where(
+            Article.id != article["id"],
+            Article.source_id != article["source_id"],
+            Article.extraction_status == "ok",
+            ts >= when - window,
+            ts <= when + window,
+        )
+        .order_by(distance)
+        .limit(k)
+    ).all()
+
+    out = []
+    for aid, title, full_text, source_id, source_name, tier, dist in rows:
+        sim = 1.0 - float(dist)
+        if sim < min_sim:
+            continue
+        out.append(
+            {
+                "id": aid,
+                "title": title,
+                "lead": _lead(full_text),
+                "source_id": source_id,
+                "source_name": source_name,
+                "tier": tier,
+                "similarity": round(sim, 3),
+            }
+        )
+    return out
+
+
+def _merge_candidates(lexical: list[dict], vector: list[dict]) -> list[dict]:
+    """Union by article id (lexical first), capped at max_candidates."""
+    cap = int(CORROBORATION.get("max_candidates", 8))
+    merged: dict[int, dict] = {}
+    for c in (*lexical, *vector):
+        merged.setdefault(c["id"], c)
+    return list(merged.values())[:cap]
+
+
 _ADJUDICATE_SYSTEM = """You decide whether news articles report the SAME underlying \
 news event — the same who/what/when — as a TARGET article. Two articles report the \
 same event if a reader would say "these are about the same thing that happened," even \
@@ -211,14 +278,29 @@ async def _adjudicate(
 
 
 async def score_corroboration(
-    session: Session, client: httpx.AsyncClient, article: dict
+    session: Session,
+    client: httpx.AsyncClient,
+    article: dict,
+    target_vec: list[float] | None = None,
 ) -> tuple[int | None, dict | None]:
     """Full corroboration pass for one article.
+
+    Candidates are the UNION of the lexical token-overlap filter and a cosine
+    nearest-neighbour search over stored embeddings, so paraphrased coverage is
+    not missed. `target_vec` (the article's embedding) is reused when the caller
+    already computed it; otherwise it is embedded here. If embedding is
+    unavailable, recall gracefully degrades to lexical-only.
 
     Returns (subscore, evidence) where subscore is None when nothing corroborates.
     evidence (when present) = {distinct_sources, any_trusted, matched:[...], ...}.
     """
-    candidates = find_candidates(session, article)
+    lexical = find_candidates(session, article)
+
+    if target_vec is None:
+        target_vec = await embed(client, embed_text(article["title"], article["full_text"]))
+    vector = _vector_candidates(session, article, target_vec) if target_vec else []
+
+    candidates = _merge_candidates(lexical, vector)
     if not candidates:
         return None, None
 

@@ -10,6 +10,7 @@ from app.db import SessionLocal
 from app.models import Article, Score, Source
 from app.scoring.content import score_content
 from app.scoring.corroboration import score_corroboration
+from app.scoring.embeddings import embed, embed_text, store_embedding
 from app.scoring.fuse import fuse
 from app.scoring.reputation import reputation_subscore
 from app.scoring.settings import MODEL, WEIGHTS
@@ -59,7 +60,16 @@ async def score_pending(limit: int) -> int:
 
             rep_subscore, _ = reputation_subscore(tier, url)
 
+            # Phase 2: embed the article once — reused for corroboration matching
+            # and stored so future articles can match against it. Failure-tolerant.
+            target_vec = None
+            try:
+                target_vec = await embed(client, embed_text(title, text))
+            except Exception as exc:
+                print(f"[score] embed error id={article_id}: {exc}", flush=True)
+
             # Phase 2: cross-source corroboration (positive-only; None if no match).
+            # Candidates = lexical token-overlap UNION cosine nearest-neighbours.
             corro_subscore, corro_evidence = None, None
             try:
                 article = {
@@ -68,10 +78,17 @@ async def score_pending(limit: int) -> int:
                 }
                 with SessionLocal() as session:
                     corro_subscore, corro_evidence = await score_corroboration(
-                        session, client, article
+                        session, client, article, target_vec
                     )
             except Exception as exc:
                 print(f"[score] corroboration error id={article_id}: {exc}", flush=True)
+
+            if target_vec:
+                try:
+                    with SessionLocal() as session:
+                        store_embedding(session, article_id, target_vec)
+                except Exception as exc:
+                    print(f"[score] embed store error id={article_id}: {exc}", flush=True)
 
             final, band = fuse(result["content_subscore"], rep_subscore, corro_subscore)
 

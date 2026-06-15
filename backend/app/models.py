@@ -3,11 +3,16 @@ to keep migrations simple; allowed values live alongside as module constants."""
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+# nomic-embed-text dimensionality (kept in sync with config/scoring.yaml and the
+# 0004_embeddings migration). A model swap to a different dim => re-embed + migration.
+EMBED_DIM = 768
 
 # Allowed string values (enforced in app code / validation, not the DB schema).
 REPUTATION_TIERS = ("trusted", "questionable", "unknown")
@@ -71,3 +76,16 @@ class Score(Base):
     scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     article: Mapped[Article] = relationship(back_populates="scores")
+
+
+class ArticleEmbedding(Base):
+    """One dense embedding per article (1:1), used as the vector side of the
+    hybrid corroboration candidate filter. Backfilled independently of scoring."""
+
+    __tablename__ = "article_embeddings"
+
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
+    model: Mapped[str] = mapped_column(String(128))
+    dim: Mapped[int] = mapped_column(Integer)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBED_DIM))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -3,7 +3,9 @@
 
 services:
   db:
-    image: postgres:16
+    # pgvector image (Postgres 16 + the `vector` extension) for embedding-based
+    # corroboration recall. Same PG16 major, so the existing pgdata volume is reused.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-fnd}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fnd_dev_password}

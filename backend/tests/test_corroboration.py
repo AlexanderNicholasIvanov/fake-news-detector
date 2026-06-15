@@ -1,6 +1,7 @@
 """Unit tests for the pure corroboration logic (token overlap + subscore)."""
 
 from app.scoring.corroboration import (
+    _merge_candidates,
     corroboration_subscore,
     jaccard,
     significant_tokens,
@@ -63,3 +64,26 @@ def test_trusted_corroborator_adds_bonus():
 def test_subscore_clamped_to_100():
     score, _ = corroboration_subscore(["trusted", "trusted", "trusted"])
     assert score == 92  # 84 + 8, still under 100
+
+
+def _cand(i: int, **extra) -> dict:
+    return {"id": i, "title": f"t{i}", "lead": "", "source_id": i, "tier": "unknown", **extra}
+
+
+def test_merge_union_dedups_preferring_lexical():
+    lexical = [_cand(1, overlap=0.5)]
+    vector = [_cand(1, similarity=0.9), _cand(2, similarity=0.8)]
+    merged = _merge_candidates(lexical, vector)
+    ids = [c["id"] for c in merged]
+    assert ids == [1, 2]  # id=1 unioned once
+    by_id = {c["id"]: c for c in merged}
+    assert "overlap" in by_id[1] and "similarity" not in by_id[1]  # lexical entry wins
+    assert "similarity" in by_id[2]  # vector-only candidate retained
+
+
+def test_merge_caps_at_max_candidates():
+    lexical = [_cand(i, overlap=0.2) for i in range(6)]
+    vector = [_cand(i, similarity=0.7) for i in range(6, 14)]
+    merged = _merge_candidates(lexical, vector)
+    assert len(merged) == 8  # max_candidates floor; lexical-first ordering preserved
+    assert [c["id"] for c in merged] == list(range(8))

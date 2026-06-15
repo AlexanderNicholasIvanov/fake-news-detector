@@ -34,3 +34,10 @@ corroboration:
     "1": 62
     "2": 74
     "3": 84               # 3+ uses this value
+  # Embedding-based recall (Phase 2 follow-up): the candidate filter is the UNION
+  # of the lexical match above and vector nearest-neighbours, so paraphrased
+  # coverage of the same event still becomes a candidate. Adjudication is unchanged.
+  embedding_model: nomic-embed-text   # host Ollama: `ollama pull nomic-embed-text`
+  embedding_dim: 768                  # nomic-embed-text dimensionality
+  embedding_candidates: 8             # top-k nearest neighbours considered
+  min_similarity: 0.55                # cosine-similarity floor for a vector candidate
