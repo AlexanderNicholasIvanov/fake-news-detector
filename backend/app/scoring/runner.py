@@ -13,7 +13,8 @@ from app.scoring.corroboration import score_corroboration
 from app.scoring.embeddings import embed, embed_text, store_embedding
 from app.scoring.fuse import fuse
 from app.scoring.reputation import reputation_subscore
-from app.scoring.settings import MODEL, WEIGHTS
+from app.scoring.rescore import rescore_corroborators
+from app.scoring.settings import CORROBORATION, MODEL, WEIGHTS
 
 
 def _unscored(session: Session, limit: int) -> list[tuple]:
@@ -111,4 +112,17 @@ async def score_pending(limit: int) -> int:
                 )
                 session.commit()
             scored += 1
+
+            # Reactive retroactive re-score: this article (now persisted) may
+            # corroborate older articles that were scored before it existed —
+            # refresh their stored corroboration. Failure-isolated, non-recursive.
+            if CORROBORATION.get("retroactive_rescore", True) and corro_evidence:
+                try:
+                    n = await rescore_corroborators(client, corro_evidence)
+                    if n:
+                        print(f"[score] retroactively re-scored {n} article(s) "
+                              f"corroborated by id={article_id}", flush=True)
+                except Exception as exc:
+                    print(f"[score] retroactive rescore error id={article_id}: {exc}",
+                          flush=True)
     return scored

@@ -40,10 +40,14 @@ def test_fuse_uncorroborated_matches_legacy_6040_blend() -> None:
     assert fuse(95, 25)[0] == 67          # clean content, questionable source
 
 
-def test_fuse_corroboration_is_applied_when_present() -> None:
-    # Phase 2 weights 0.51/0.34/0.15. Corroboration is a positive-only signal.
-    final, _ = fuse(80, 85, corroboration_subscore=50)
-    assert final == 77  # round(0.51*80 + 0.34*85 + 0.15*50)
+def test_fuse_corroboration_only_lifts_never_lowers() -> None:
+    # Positive-only: a low corroboration subscore must NOT drag down a score whose
+    # content+reputation base already exceeds it (base 82 > weighted-with-corro 77).
+    base = fuse(80, 85)[0]                                # 82
+    assert fuse(80, 85, corroboration_subscore=50)[0] == base
+    # but strong corroboration on a lower base lifts it
+    low_base = fuse(60, 50)[0]
+    assert fuse(60, 50, corroboration_subscore=90)[0] > low_base
 
 
 def test_fuse_corroboration_lifts_a_borderline_score() -> None:

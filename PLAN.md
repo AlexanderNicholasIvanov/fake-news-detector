@@ -118,9 +118,22 @@ similarity 0.71–0.82), while the adjudicator still rejected the topical-but-
 different neighbours. Golden-set eval unchanged at 88% (the eval path is
 content+reputation only). See `docs/phase2-embedding-recall.md`.
 
-Future: retroactive re-scoring when later coverage corroborates an older article
-(the embeddings now exist to make this cheap), optional alerting, Haiku/cloud A/B
-behind the model flag.
+**Retroactive re-scoring — implemented.** Corroboration is symmetric within the
+window, so when a newly-scored article corroborates an older one, the older
+article (scored before the new coverage existed) is re-evaluated: a cheap
+corroboration-only recompute (no content LLM call; the stored embedding is
+reused) re-fuses with the carried-forward content/reputation and appends an
+updated Score only when it changed (idempotent). Runs both reactively in the
+worker (`scoring/rescore.py`, config-gated by `corroboration.retroactive_rescore`)
+and as a one-shot backlog catch-up (`scoring/rescore_corroboration.py`).
+Re-scoring the corpus surfaced — and fixed — a latent issue: corroboration was
+blended as a plain weighted component, so a thinly-corroborated but already-high
+article could be dragged *down* (a trusted source went 85→82). `fuse` now clamps
+corroboration to **lift-only** (`final = max(base, corroboration-weighted blend)`),
+restoring the documented "can only lift" guarantee with no regression on
+uncorroborated articles.
+
+Future: optional alerting, Haiku/cloud A/B behind the model flag.
 
 ## Cross-cutting
 

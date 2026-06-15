@@ -41,3 +41,7 @@ corroboration:
   embedding_dim: 768                  # nomic-embed-text dimensionality
   embedding_candidates: 8             # top-k nearest neighbours considered
   min_similarity: 0.55                # cosine-similarity floor for a vector candidate
+  # When a newly-scored article corroborates older ones, re-score those older
+  # articles so their stored score reflects the new coverage (corroboration is
+  # symmetric within the window). Set false to disable the reactive re-score.
+  retroactive_rescore: true

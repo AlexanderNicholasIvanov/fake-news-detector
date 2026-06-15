@@ -20,20 +20,25 @@ def fuse(
 ) -> tuple[int, str]:
     """Weighted blend of the component sub-scores → (final_score, band).
 
-    Corroboration is a Phase-2 placeholder: when it's None its weight is
-    excluded and the remaining weights are renormalized, so the MVP blend is a
-    clean content/reputation mix regardless of the configured corroboration weight.
+    The base is a content/reputation mix (weights renormalized so they sum to 1,
+    independent of the configured corroboration weight — the MVP 0.6/0.4 blend).
+
+    Corroboration is **positive-only**: it can LIFT the score but never lower it.
+    When absent it is excluded (base only); when present we take the max of the
+    base and the corroboration-weighted blend, so a thinly-corroborated article
+    whose content+reputation already scored higher is not dragged down.
     """
     wc = WEIGHTS.get("content", 0.6)
     wr = WEIGHTS.get("reputation", 0.4)
     wk = WEIGHTS.get("corroboration", 0.0)
 
-    raw = wc * content_subscore + wr * reputation_subscore
-    total = wc + wr
-    if corroboration_subscore is not None:
-        raw += wk * corroboration_subscore
-        total += wk
+    base = (wc * content_subscore + wr * reputation_subscore) / (wc + wr) if (wc + wr) else 0.0
+    final = base
+    if corroboration_subscore is not None and (wc + wr + wk):
+        with_corro = (
+            wc * content_subscore + wr * reputation_subscore + wk * corroboration_subscore
+        ) / (wc + wr + wk)
+        final = max(base, with_corro)  # lift-only: never below the base blend
 
-    final = round(raw / total) if total else 0
-    final = max(0, min(100, final))
+    final = max(0, min(100, round(final)))
     return final, band_for(final)
