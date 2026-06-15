@@ -105,9 +105,22 @@ the uncorroborated blend renormalizes to exactly the MVP's 0.6/0.4 — no
 regression (golden-set eval unchanged at 88%). Evidence (matched articles) is
 stored in `scores.corroboration` (JSONB) and shown in the dashboard breakdown.
 
-Future: candidate recall via embeddings (catches paraphrased headlines the
-lexical filter misses), retroactive re-scoring when later coverage corroborates
-an older article, optional alerting, Haiku/cloud A/B behind the model flag.
+**Embedding recall — implemented.** The candidate filter is now the UNION of the
+lexical token-overlap match and a cosine nearest-neighbour search over per-article
+embeddings (`nomic-embed-text` via Ollama, stored in `article_embeddings` with a
+pgvector HNSW index), so paraphrased coverage of the same event — which the lexical
+filter alone misses — still becomes a candidate. The "same event?" adjudicator is
+unchanged, so precision is preserved; this only widens recall. Validated on a real
+multi-source event (the US national-security order restricting Anthropic exports):
+a ZeroHedge article that got **0** corroborating sources under lexical-only recall
+earns **3** under the hybrid (BBC + Breitbart + Al Jazeera, recovered at cosine
+similarity 0.71–0.82), while the adjudicator still rejected the topical-but-
+different neighbours. Golden-set eval unchanged at 88% (the eval path is
+content+reputation only). See `docs/phase2-embedding-recall.md`.
+
+Future: retroactive re-scoring when later coverage corroborates an older article
+(the embeddings now exist to make this cheap), optional alerting, Haiku/cloud A/B
+behind the model flag.
 
 ## Cross-cutting
 

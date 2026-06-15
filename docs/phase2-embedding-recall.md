@@ -1,7 +1,12 @@
 # Phase 2 — Embedding-based corroboration recall
 
-**Status: planned.** Implementation plan + locked decisions. Builds on the
-shipped lexical corroboration (`scoring/corroboration.py`).
+**Status: implemented & validated.** Builds on the shipped lexical corroboration
+(`scoring/corroboration.py`). Validated live on a real multi-source event — a
+ZeroHedge article on the US national-security order restricting Anthropic exports
+went from **0** corroborating sources (lexical-only) to **3** (hybrid: BBC +
+Breitbart + Al Jazeera, recovered at cosine similarity 0.71–0.82), with the
+adjudicator still rejecting topical-but-different neighbours. Golden-set eval
+unchanged at 88%.
 
 ## Problem
 
@@ -84,3 +89,16 @@ counts. This is purely a recall play.
 - **Ordering**: candidates need embeddings first — run the backfill before relying
   on vector recall.
 - **Validation is Docker-gated** — needs the stack + `nomic-embed-text` pulled.
+- **`min_similarity` tuning (observed)**: at 0.55 the vector stage surfaces many
+  topical-but-different-event neighbours in topic-dense genres (e.g. health
+  studies). The adjudicator filters them correctly — precision is fine — but it
+  means more candidates per adjudication call (capped at `max_candidates=8`).
+  Raising the floor (~0.7) would trim noise/cost, BUT true same-event matches were
+  observed at 0.71–0.82 and some different-event neighbours also sit at 0.7+, so
+  similarity alone can't cleanly separate them — which is exactly why the LLM
+  adjudicator is the gate. Current behaviour is correct; the floor is a
+  cost-vs-recall knob, not a correctness one. Tune against live data if adjudicator
+  load matters.
+- **Historical re-scoring**: existing pre-feature scores keep their lexical-only
+  corroboration; only newly-scored articles benefit. Retroactive re-scoring (now
+  cheap, since embeddings exist) is the listed next step.

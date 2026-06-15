@@ -17,14 +17,18 @@ scoring → dashboard runs end-to-end, with an offline evaluation harness.
   breakdown + topic column/detail view)
 - **M4** evaluation (golden set + regression harness)
 - **Phase 2** cross-source corroboration — an event independently reported by
-  other outlets (especially trusted ones) lifts the score; a lexical candidate
-  filter feeds an LLM "same event?" adjudicator. Positive-only: an uncorroborated
-  exclusive is never penalized, so uncorroborated articles score exactly as in M2.
+  other outlets (especially trusted ones) lifts the score; a hybrid candidate
+  filter (lexical token-overlap **∪** pgvector cosine nearest-neighbours over
+  `nomic-embed-text` embeddings, so paraphrased coverage isn't missed) feeds an
+  LLM "same event?" adjudicator. Positive-only: an uncorroborated exclusive is
+  never penalized, so uncorroborated articles score exactly as in M2.
 
 ## Prerequisites
 
 - Docker + Docker Compose
-- [Ollama](https://ollama.com) on the host with `ollama pull qwen3:14b` (for scoring)
+- [Ollama](https://ollama.com) on the host with the scoring + embedding models:
+  `ollama pull qwen3:14b` (credibility scoring) and
+  `ollama pull nomic-embed-text` (corroboration recall — see Phase 2 below).
   - The Ollama **server** must listen on all interfaces so the container can reach
     it: set `OLLAMA_HOST=0.0.0.0:11434` on the host and restart Ollama.
 - (For running outside Docker) Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22+
