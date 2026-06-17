@@ -1,21 +1,20 @@
 """Fake-News Detector launcher (native, no Docker).
 
-Built with PyInstaller (see build.py) into two single-file binaries from this one
-source; behaviour is chosen by the executable's own name:
+Built with PyInstaller (see build.py) into a single binary, run-fakenews.exe:
 
-    run-fakenews.exe   -> a native desktop window (pywebview / Edge WebView2):
-                          shows a loading screen while it runs preflight checks,
-                          applies DB migrations, starts the API + worker + Vite
-                          dev server as native processes, waits for the API to be
-                          healthy, then loads the dashboard inside the window.
-                          No browser, no console, no address bar.
-    stop-fakenews.exe   -> a small console tool: stops any services this app left
-                          running (read from the pid file).
+    Double-click  -> a native desktop window (pywebview / Edge WebView2): shows a
+                     loading screen while it runs preflight checks, starts the
+                     bundled PostgreSQL, applies DB migrations, starts the API +
+                     worker + Vite dev server as native processes, waits for the
+                     API to be healthy, then loads the dashboard inside the window.
+                     No browser, no console, no address bar.
+    Close window  -> shuts the whole stack down (services + the PostgreSQL it
+                     started). One exe is the entire lifecycle.
 
-The stack runs natively against a locally installed PostgreSQL (with the pgvector
-extension) and the host's Ollama. There is no containerisation: the API and worker
-run from backend/.venv, the frontend from its npm dev server. One-time setup
-(venv, frontend deps, DB role/extension) is done by scripts/setup-native.ps1.
+The stack runs natively against the bundled portable PostgreSQL (with pgvector)
+and the host's Ollama. There is no containerisation: the API and worker run from
+backend/.venv, the frontend from its npm dev server. One-time setup (PostgreSQL,
+venv, frontend deps, DB role/extension) is done by scripts/setup-native.ps1.
 
 Hidden mode for testing: pass --selfcheck to run the full startup sequence in the
 console (no window) and exit 0/1 — used to validate the frozen exe headlessly.
@@ -588,22 +587,7 @@ def do_app(root: Path) -> None:
     _trace("teardown end")
 
 
-# --------------------------------------------------------------- console modes
-def do_stop(root: Path) -> int:
-    print("\n  Fake-News Detector - stopping\n  " + "=" * 30 + "\n")
-    if pid_file(root).exists():
-        stop_stack(root)
-        print(" [OK]  services stopped (API, worker, frontend).")
-    else:
-        print(" [--]  no running services recorded.")
-    # Stop the bundled PostgreSQL too (data persists in the data dir).
-    if pg_installed() and postgres_reachable():
-        stop_postgres()
-        print(" [OK]  PostgreSQL stopped.")
-    input("\nPress Enter to close this window...")
-    return 0
-
-
+# --------------------------------------------------------------- console mode
 def do_selfcheck(root: Path) -> int:
     """Run the full startup sequence in the console (no window). For testing."""
     print("[selfcheck] root:", root)
@@ -638,11 +622,8 @@ def do_selfcheck(root: Path) -> int:
 
 def main() -> int:
     root = find_project_root()
-    exe_name = Path(sys.argv[0]).stem.lower()
     if "--selfcheck" in sys.argv:
         return do_selfcheck(root)
-    if "stop" in exe_name:
-        return do_stop(root)
     do_app(root)
     return 0
 

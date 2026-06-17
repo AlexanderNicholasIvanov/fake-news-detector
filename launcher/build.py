@@ -1,11 +1,11 @@
-"""Build the launcher binaries with PyInstaller.
+"""Build the launcher binary with PyInstaller.
 
 Creates an isolated build venv, installs pinned PyInstaller + pywebview, and
-produces two single-file executables in the repo root from one source
-(run_fakenews.py); behaviour is selected at runtime by the executable's name:
+produces a single-file executable in the repo root from run_fakenews.py:
 
-    run-fakenews(.exe)   native desktop window (pywebview / WebView2), windowed
-    stop-fakenews(.exe)  console tool (stops the native services it left running)
+    run-fakenews(.exe)   native desktop window (pywebview / WebView2). Double-click
+                         to launch the whole stack; close the window to shut it all
+                         down (services + bundled PostgreSQL).
 
 Usage:  python launcher/build.py
 """
@@ -26,16 +26,12 @@ SOURCE = HERE / "run_fakenews.py"
 BUILD = HERE / "_build"
 VENV = BUILD / "venv"
 
-# (name, is_app). The app build bundles the webview backend; the console build
-# (lazy-imports webview only at runtime, never reached) stays slim.
+# A single app build. It bundles the pywebview backend + WebView2 loader.
 #
 # The app is NOT built --windowed: it keeps a console subsystem (hidden at runtime
 # via _hide_own_console) so spawned service processes inherit a console cleanly.
 # Child processes are started with CREATE_NO_WINDOW so none of them pop a console.
-TARGETS = [
-    ("run-fakenews", True),
-    ("stop-fakenews", False),
-]
+APP_NAME = "run-fakenews"
 
 
 def venv_python(v: Path) -> Path:
@@ -52,23 +48,21 @@ def main() -> int:
     subprocess.run([py, "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
     subprocess.run([py, "-m", "pip", "install", "-q", PYINSTALLER, PYWEBVIEW], check=True)
 
-    for name, is_app in TARGETS:
-        print(f"[build] bundling {name}{' (app)' if is_app else ''}")
-        args = [
-            py, "-m", "PyInstaller", "--onefile", "--clean", "--noconfirm",
-            "--name", name,
-            "--distpath", str(ROOT),
-            "--workpath", str(BUILD / "work"),
-            "--specpath", str(BUILD),
-        ]
-        if is_app:
-            # Pull in the pywebview backend + WebView2 loader. Console subsystem is
-            # kept (hidden at runtime); child services run with CREATE_NO_WINDOW.
-            args += ["--collect-all", "webview"]
-        args += [str(SOURCE)]
-        subprocess.run(args, check=True)
+    print(f"[build] bundling {APP_NAME}")
+    args = [
+        py, "-m", "PyInstaller", "--onefile", "--clean", "--noconfirm",
+        "--name", APP_NAME,
+        "--distpath", str(ROOT),
+        "--workpath", str(BUILD / "work"),
+        "--specpath", str(BUILD),
+        # Pull in the pywebview backend + WebView2 loader. Console subsystem is
+        # kept (hidden at runtime); child services run with CREATE_NO_WINDOW.
+        "--collect-all", "webview",
+        str(SOURCE),
+    ]
+    subprocess.run(args, check=True)
 
-    print(f"[build] done. Executables written to {ROOT}")
+    print(f"[build] done. Executable written to {ROOT / (APP_NAME + '.exe')}")
     return 0
 
 

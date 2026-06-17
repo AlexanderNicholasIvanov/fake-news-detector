@@ -42,25 +42,22 @@ and stops this bundled PostgreSQL with the app; its data dir persists between ru
 
 After the [one-time setup](#one-time-setup-native), double-click
 **`run-fakenews.exe`** in the repo root. It opens as a **native desktop window**
-(no browser, no address bar): a loading screen runs the preflight checks
-(PostgreSQL reachable, app setup present, Ollama + model), creates `.env` if
-missing, applies database migrations, starts the API + worker + Vite dev server
-as **native processes**, waits for the API to be healthy, then loads the
-dashboard inside the window. Use **`stop-fakenews.exe`** to shut it down.
+(no browser, no address bar): a loading screen runs the preflight checks (app
+setup present, Ollama + model), starts the bundled PostgreSQL, applies database
+migrations, starts the API + worker + Vite dev server as **native processes**,
+waits for the API to be healthy, then loads the dashboard inside the window.
+
+**One executable is the whole lifecycle: run it to launch, close the window to
+stop.** Closing the window shuts the stack down — the API, worker, and frontend
+processes, plus the bundled PostgreSQL (only if the app started it; the data dir
+persists, so your corpus survives a restart). The host's Ollama is left alone.
 
 The window uses the Edge **WebView2** runtime (pre-installed on Windows 10/11)
-via [pywebview]; the services run locally as plain processes, but the browser
-and `localhost` are hidden behind the app window. **Closing the window stops
-every service it started** (API, worker, frontend). The locally installed
-**PostgreSQL service is left running** (it holds the data, so your corpus
-survives a restart), and the host's Ollama is left alone. `stop-fakenews.exe`
-does the same teardown from the command line (it reads the recorded PIDs).
-
-Both binaries are built from one source ([`launcher/run_fakenews.py`](./launcher/run_fakenews.py))
-with PyInstaller; behaviour is chosen by the executable's name. Rebuild with:
+via [pywebview]. Built from [`launcher/run_fakenews.py`](./launcher/run_fakenews.py)
+with PyInstaller; rebuild with:
 
 ```bash
-python launcher/build.py   # writes run-fakenews.exe + stop-fakenews.exe to repo root
+python launcher/build.py   # writes run-fakenews.exe to the repo root
 ```
 
 [pywebview]: https://pywebview.flowrl.com/
@@ -140,7 +137,7 @@ cd backend
 ```
 backend/   FastAPI app, SQLAlchemy models, Alembic migrations, config/, tests/
 frontend/  Vite + React + TypeScript + Tailwind dashboard
-launcher/  PyInstaller sources for run-fakenews.exe / stop-fakenews.exe
+launcher/  PyInstaller source for run-fakenews.exe (launch + close = one exe)
 scripts/   setup-native.ps1 (one-time native setup: portable PostgreSQL + pgvector)
 backups/   local corpus snapshots (gitignored); restorable via setup-native.ps1 -RestoreDump
 PLAN.md    Full implementation plan and milestones
