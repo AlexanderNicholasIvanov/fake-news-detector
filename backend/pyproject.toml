@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "fake-news-detector"
 version = "0.1.0"
@@ -31,6 +35,12 @@ dev = [
 ]
 
 # M2 adds: openai (Ollama OpenAI-compatible client), tenacity
+
+# Flat layout: only `app` (and its subpackages) is an installable package; the
+# sibling `config/` (YAML), `alembic/` (migrations) and `tests/` are not.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 100

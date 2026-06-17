@@ -26,3 +26,8 @@ Thumbs.db
 
 # Launcher build artifacts (the built .exe files at repo root ARE tracked)
 launcher/_build/
+
+# Native run: launcher runtime files + local corpus snapshot
+logs/
+.fnd-pids
+backups/

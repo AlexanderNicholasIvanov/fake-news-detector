@@ -5,7 +5,7 @@ produces two single-file executables in the repo root from one source
 (run_fakenews.py); behaviour is selected at runtime by the executable's name:
 
     run-fakenews(.exe)   native desktop window (pywebview / WebView2), windowed
-    stop-fakenews(.exe)  console tool (docker compose down)
+    stop-fakenews(.exe)  console tool (stops the native services it left running)
 
 Usage:  python launcher/build.py
 """
@@ -30,9 +30,8 @@ VENV = BUILD / "venv"
 # (lazy-imports webview only at runtime, never reached) stays slim.
 #
 # The app is NOT built --windowed: it keeps a console subsystem (hidden at runtime
-# via _hide_own_console) so docker subprocesses inherit a console and run fast. A
-# fully console-less (--windowed) build makes the docker CLI's daemon calls crawl
-# (teardown took ~60s); with a hidden console it's a few seconds.
+# via _hide_own_console) so spawned service processes inherit a console cleanly.
+# Child processes are started with CREATE_NO_WINDOW so none of them pop a console.
 TARGETS = [
     ("run-fakenews", True),
     ("stop-fakenews", False),
@@ -64,7 +63,7 @@ def main() -> int:
         ]
         if is_app:
             # Pull in the pywebview backend + WebView2 loader. Console subsystem is
-            # kept (hidden at runtime) so docker subprocesses stay fast.
+            # kept (hidden at runtime); child services run with CREATE_NO_WINDOW.
             args += ["--collect-all", "webview"]
         args += [str(SOURCE)]
         subprocess.run(args, check=True)

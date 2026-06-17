@@ -1,14 +1,21 @@
-"""Fake-News Detector launcher.
+"""Fake-News Detector launcher (native, no Docker).
 
 Built with PyInstaller (see build.py) into two single-file binaries from this one
 source; behaviour is chosen by the executable's own name:
 
     run-fakenews.exe   -> a native desktop window (pywebview / Edge WebView2):
                           shows a loading screen while it runs preflight checks,
-                          brings the Docker stack up, waits for the API to be
+                          applies DB migrations, starts the API + worker + Vite
+                          dev server as native processes, waits for the API to be
                           healthy, then loads the dashboard inside the window.
                           No browser, no console, no address bar.
-    stop-fakenews.exe   -> a small console tool: `docker compose down`.
+    stop-fakenews.exe   -> a small console tool: stops any services this app left
+                          running (read from the pid file).
+
+The stack runs natively against a locally installed PostgreSQL (with the pgvector
+extension) and the host's Ollama. There is no containerisation: the API and worker
+run from backend/.venv, the frontend from its npm dev server. One-time setup
+(venv, frontend deps, DB role/extension) is done by scripts/setup-native.ps1.
 
 Hidden mode for testing: pass --selfcheck to run the full startup sequence in the
 console (no window) and exit 0/1 — used to validate the frozen exe headlessly.
@@ -19,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -33,12 +41,17 @@ DASHBOARD = "http://localhost:5173"
 OLLAMA_TAGS = "http://localhost:11434/api/tags"
 HEALTH_TIMEOUT_S = 240
 
+DB_HOST = "localhost"
+DB_PORT = 5432
+
+# Windows process-creation flag: don't pop a console window for child processes.
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+
 def _hide_own_console() -> None:
     """Hide this process's console window (Windows) so the app shows only its
     native window. Only hides a console THIS process owns - never a shared parent
-    terminal - so launching from a shell doesn't hide the shell. Keeping a (hidden)
-    console means docker subprocesses inherit it and run fast; a fully console-less
-    process makes the docker CLI's daemon calls crawl."""
+    terminal - so launching from a shell doesn't hide the shell."""
     if os.name != "nt":
         return
     try:
@@ -70,15 +83,66 @@ def _trace(msg: str) -> None:
 
 # ---------------------------------------------------------------- project setup
 def find_project_root() -> Path:
-    """Walk up from the executable/script until docker-compose.yml is found."""
+    """Walk up from the executable/script until the repo root is found.
+
+    The root is identified by the backend package (backend/app); docker-compose.yml
+    is no longer required (the stack runs natively) but is still accepted as a
+    marker for repos that still carry it.
+    """
     if getattr(sys, "frozen", False):
         start = Path(sys.executable).resolve().parent
     else:
         start = Path(__file__).resolve().parent
     for d in (start, *start.parents):
-        if (d / "docker-compose.yml").exists():
+        if (d / "backend" / "app").is_dir() or (d / "docker-compose.yml").exists():
             return d
     return start
+
+
+def backend_dir(root: Path) -> Path:
+    return root / "backend"
+
+
+def frontend_dir(root: Path) -> Path:
+    return root / "frontend"
+
+
+def venv_python(root: Path) -> Path:
+    name = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    return backend_dir(root) / ".venv" / name
+
+
+def log_dir(root: Path) -> Path:
+    d = root / "logs"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def pid_file(root: Path) -> Path:
+    return root / ".fnd-pids"
+
+
+# Bundled (portable) PostgreSQL — conda-forge build under %LOCALAPPDATA%, managed
+# by this launcher (it isn't a Windows service). Set up by scripts/setup-native.ps1.
+def pg_base() -> Path:
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(root) / "FakeNewsDetector"
+
+
+def pg_bin() -> Path:
+    return pg_base() / "pg" / "Library" / "bin"
+
+
+def pg_data() -> Path:
+    return pg_base() / "pgdata"
+
+
+def pg_log() -> Path:
+    return pg_base() / "pg.log"
+
+
+def pg_installed() -> bool:
+    return (pg_bin() / "pg_ctl.exe").exists() and (pg_data() / "PG_VERSION").exists()
 
 
 def load_env(root: Path) -> dict[str, str]:
@@ -103,25 +167,33 @@ def ensure_env_file(root: Path) -> None:
         shutil.copyfile(example, env_path)
 
 
-# ------------------------------------------------------------ stack control (io)
-def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False):
-    kw: dict = {"text": True}
-    if capture:
-        kw["capture_output"] = True
-    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, **kw)
-
-
-def docker_present() -> bool:
-    return shutil.which("docker") is not None
-
-
-def docker_running() -> bool:
-    return _run(["docker", "info"], capture=True).returncode == 0
-
-
+# ------------------------------------------------------------------- preflight
 def http_json(url: str, timeout: float = 4.0):
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def postgres_reachable(host: str = DB_HOST, port: int = DB_PORT, timeout: float = 2.0) -> bool:
+    """TCP-connect to Postgres. A reachable port is enough for preflight — the API
+    surfaces auth/schema errors with a real message if creds are wrong."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def prerequisites_ready(root: Path) -> tuple[bool, str]:
+    """One-time native setup present? (bundled PostgreSQL + backend venv + frontend deps)."""
+    if not (pg_bin() / "pg_ctl.exe").exists():
+        return False, "bundled PostgreSQL missing"
+    if not (pg_data() / "PG_VERSION").exists():
+        return False, "PostgreSQL data dir not initialized"
+    if not venv_python(root).exists():
+        return False, "backend venv missing"
+    if not (frontend_dir(root) / "node_modules").is_dir():
+        return False, "frontend node_modules missing"
+    return True, ""
 
 
 def ollama_status(env: dict[str, str]) -> tuple[str, str]:
@@ -139,23 +211,142 @@ def ollama_status(env: dict[str, str]) -> tuple[str, str]:
     return "warn", f"Ollama running but '{model}' not pulled (run: ollama pull {model})"
 
 
-def compose_up(root: Path) -> tuple[bool, str]:
-    proc = _run(["docker", "compose", "up", "--build", "-d"], cwd=root, capture=True)
+# ------------------------------------------------------------- stack control (io)
+def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False,
+         env: dict | None = None):
+    kw: dict = {"text": True}
+    if capture:
+        kw["capture_output"] = True
+    if os.name == "nt":
+        kw["creationflags"] = _CREATE_NO_WINDOW
+    if env is not None:
+        kw["env"] = env
+    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, **kw)
+
+
+def child_env(root: Path) -> dict:
+    """os.environ overlaid with .env values, so spawned api/worker get DATABASE_URL,
+    OLLAMA_BASE_URL, etc. regardless of cwd (compose used to inject these)."""
+    return {**os.environ, **load_env(root)}
+
+
+def _pg_ctl(*args: str) -> int:
+    """Run pg_ctl with all stdio detached to DEVNULL.
+
+    Capturing pg_ctl's pipes deadlocks on Windows: the postmaster it starts inherits
+    the stdout/stderr pipe and holds it open for the server's whole lifetime, so a
+    PIPE read in the parent never reaches EOF and subprocess.run() blocks forever —
+    even though the server came up fine. DEVNULL means there's no pipe to inherit.
+    """
+    flags = _CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.run(
+        [str(pg_bin() / "pg_ctl.exe"), *args],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=flags,
+    ).returncode
+
+
+def start_postgres() -> bool:
+    """Start the bundled PostgreSQL if it isn't already listening. Returns True iff
+    THIS call started it (so teardown knows whether to stop it). Raises on failure."""
+    if postgres_reachable():
+        return False  # already running (we didn't start it; leave it alone on close)
+    if not pg_installed():
+        raise RuntimeError("bundled PostgreSQL is not set up")
+    _pg_ctl("-D", str(pg_data()), "-l", str(pg_log()), "-o", "-p 5432", "-w", "start")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if postgres_reachable():
+            return True
+        time.sleep(1)
+    raise RuntimeError("PostgreSQL did not start within 30s (see pg.log)")
+
+
+def stop_postgres() -> None:
+    """Fast-stop the bundled PostgreSQL (only call if we started it)."""
+    if not pg_installed():
+        return
+    _pg_ctl("-D", str(pg_data()), "-m", "fast", "stop")
+
+
+def run_migrations(root: Path) -> tuple[bool, str]:
+    """alembic upgrade head — the API container used to do this; natively the
+    launcher must, before the API/worker touch the schema."""
+    py = str(venv_python(root))
+    proc = _run([py, "-m", "alembic", "upgrade", "head"],
+                cwd=backend_dir(root), capture=True, env=child_env(root))
     out = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode == 0, out
 
 
-def compose_down(root: Path) -> tuple[bool, str]:
-    # `kill` first: an immediate SIGKILL to every container. Without it, `down`
-    # tries a graceful stop and blocks on the worker mid-LLM-call until the
-    # ~60s COMPOSE_HTTP_TIMEOUT - so teardown crawled. kill + down -t 0 is ~5s
-    # even under load. The named Postgres volume survives (close != wipe data).
-    kw = {"cwd": str(root), "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    subprocess.run(["docker", "compose", "kill"], **kw)
-    proc = subprocess.run(
-        ["docker", "compose", "down", "-t", "0", "--remove-orphans"], **kw
+def _spawn(cmd: list[str], cwd: Path, logfile: Path,
+           env: dict | None = None) -> subprocess.Popen:
+    log = open(logfile, "a", encoding="utf-8", buffering=1)
+    flags = _CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.Popen(
+        cmd, cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, creationflags=flags, env=env,
     )
-    return proc.returncode == 0, ""
+
+
+def start_stack(root: Path) -> list[subprocess.Popen]:
+    """Start API (uvicorn), worker, and the Vite dev server as native processes.
+    Records their PIDs to the pid file so stop-fakenews can reach them too."""
+    py = str(venv_python(root))
+    logs = log_dir(root)
+    env = child_env(root)
+    procs: list[subprocess.Popen] = []
+
+    procs.append(_spawn(
+        [py, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+        backend_dir(root), logs / "api.log", env=env,
+    ))
+    procs.append(_spawn(
+        [py, "-m", "app.worker"], backend_dir(root), logs / "worker.log", env=env,
+    ))
+    npm = shutil.which("npm") or shutil.which("npm.cmd") or "npm.cmd"
+    procs.append(_spawn(
+        [npm, "run", "dev"], frontend_dir(root), logs / "frontend.log", env=env,
+    ))
+
+    pid_file(root).write_text(
+        "\n".join(str(p.pid) for p in procs), encoding="utf-8"
+    )
+    return procs
+
+
+def _taskkill_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    else:
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def stop_stack(root: Path, procs: list[subprocess.Popen] | None = None) -> None:
+    """Kill every service process (and its child tree). PostgreSQL is a separate
+    Windows service we don't own (it holds the data) so it's left running; the
+    host's Ollama is left alone too."""
+    pids: list[int] = []
+    if procs:
+        pids = [p.pid for p in procs]
+    else:
+        pf = pid_file(root)
+        if pf.exists():
+            pids = [int(x) for x in pf.read_text(encoding="utf-8").split() if x.strip().isdigit()]
+    for pid in pids:
+        _taskkill_tree(pid)
+    pf = pid_file(root)
+    if pf.exists():
+        try:
+            pf.unlink()
+        except OSError:
+            pass
 
 
 def wait_for_health(timeout_s: int = HEALTH_TIMEOUT_S) -> bool:
@@ -263,6 +454,10 @@ def _message_box(title: str, text: str) -> None:
     print(f"{title}: {text}", file=sys.stderr)
 
 
+_SETUP_HINT = ("Run the one-time setup first (PowerShell):\n"
+               "  scripts\\setup-native.ps1")
+
+
 def do_app(root: Path) -> None:
     _hide_own_console()  # show only the native window, not a console
     try:
@@ -274,9 +469,16 @@ def do_app(root: Path) -> None:
             "Opening the dashboard in your browser instead once it's ready.",
         )
         ensure_env_file(root)
-        if docker_present() and docker_running():
-            compose_up(root)
-            wait_for_health()
+        ok, _ = prerequisites_ready(root)
+        if ok:
+            try:
+                start_postgres()
+            except Exception:
+                pass
+            if postgres_reachable():
+                run_migrations(root)
+                start_stack(root)
+                wait_for_health()
         webbrowser.open(DASHBOARD)
         return
 
@@ -288,23 +490,30 @@ def do_app(root: Path) -> None:
     )
     ui.window = window
     closing = threading.Event()
+    procs: list[subprocess.Popen] = []
+    started_pg = [False]  # True iff we started PostgreSQL (so we stop it on close)
 
     def worker() -> None:
         try:
             ensure_env_file(root)
 
-            ui.begin("Checking Docker engine")
-            if not docker_present():
-                ui.set_last("err", "Docker is not installed or not on PATH")
-                ui.set_hint("Install Docker Desktop, then reopen this app:\n"
-                            "https://www.docker.com/products/docker-desktop/")
+            ui.begin("Checking app setup")
+            ready, why = prerequisites_ready(root)
+            if not ready:
+                ui.set_last("err", f"Setup incomplete - {why}")
+                ui.set_hint(_SETUP_HINT)
                 return
-            if not docker_running():
-                ui.set_last("err", "Docker engine isn't running")
-                ui.set_hint("Start Docker Desktop, wait until it's ready, then "
-                            "reopen this app.")
+            ui.set_last("ok", "PostgreSQL + backend venv + frontend deps present")
+
+            ui.begin("Starting PostgreSQL")
+            try:
+                started_pg[0] = start_postgres()
+            except Exception as exc:
+                ui.set_last("err", f"Could not start PostgreSQL: {exc}")
+                ui.set_hint(_SETUP_HINT)
                 return
-            ui.set_last("ok", "Docker engine running")
+            ui.set_last("ok", "PostgreSQL running"
+                        + (" (started)" if started_pg[0] else " (already running)"))
 
             ui.begin("Checking Ollama + model")
             level, msg = ollama_status(env)
@@ -312,13 +521,19 @@ def do_app(root: Path) -> None:
 
             if closing.is_set():
                 return
-            ui.begin("Starting containers (first run builds images - can take minutes)")
-            ok, out = compose_up(root)
+            ui.begin("Applying database migrations")
+            ok, out = run_migrations(root)
             if not ok:
-                ui.set_last("err", "Failed to start containers")
+                ui.set_last("err", "Migration failed")
                 ui.set_hint(out[-700:].strip())
                 return
-            ui.set_last("ok", "Containers started")
+            ui.set_last("ok", "Database up to date")
+
+            if closing.is_set():
+                return
+            ui.begin("Starting services (API, worker, frontend)")
+            procs.extend(start_stack(root))
+            ui.set_last("ok", "Services started")
 
             ui.begin("Waiting for the API to be healthy")
             if wait_for_health():
@@ -360,29 +575,33 @@ def do_app(root: Path) -> None:
     webview.start()  # blocks until the window is closed
     _trace("webview.start() returned")
 
-    # Window closed -> shut down everything this app started. Containers + network
-    # go; the named Postgres volume is kept (close != wipe data). Host Ollama is a
-    # shared service we didn't start, so it's left alone.
+    # Window closed -> stop everything this app started: the service processes, and
+    # the bundled PostgreSQL but only if WE started it (data persists in the data
+    # dir, so close != wipe). The host's Ollama is a shared service, left alone.
     closing.set()
     work.join(timeout=2)
-    if docker_present():
-        _trace("compose_down begin")
-        ok, _out = compose_down(root)
-        _trace(f"compose_down end ok={ok}")
+    _trace("stop_stack begin")
+    stop_stack(root, procs)
+    if started_pg[0]:
+        _trace("stop_postgres begin")
+        stop_postgres()
+    _trace("teardown end")
 
 
 # --------------------------------------------------------------- console modes
 def do_stop(root: Path) -> int:
     print("\n  Fake-News Detector - stopping\n  " + "=" * 30 + "\n")
-    if not docker_present():
-        print(" [XX]  Docker is not on PATH.")
-        input("\nPress Enter to close this window...")
-        return 1
-    ok, out = compose_down(root)
-    print(out.rstrip())
-    print(" [OK]  stack stopped." if ok else " [XX]  `docker compose down` failed.")
+    if pid_file(root).exists():
+        stop_stack(root)
+        print(" [OK]  services stopped (API, worker, frontend).")
+    else:
+        print(" [--]  no running services recorded.")
+    # Stop the bundled PostgreSQL too (data persists in the data dir).
+    if pg_installed() and postgres_reachable():
+        stop_postgres()
+        print(" [OK]  PostgreSQL stopped.")
     input("\nPress Enter to close this window...")
-    return 0 if ok else 1
+    return 0
 
 
 def do_selfcheck(root: Path) -> int:
@@ -390,18 +609,30 @@ def do_selfcheck(root: Path) -> int:
     print("[selfcheck] root:", root)
     ensure_env_file(root)
     env = load_env(root)
-    if not docker_present():
-        print("[selfcheck] FAIL: docker not found"); return 1
-    if not docker_running():
-        print("[selfcheck] FAIL: docker engine not running"); return 1
-    print("[selfcheck] docker ok")
-    print("[selfcheck] ollama:", ollama_status(env))
-    ok, _ = compose_up(root)
-    print("[selfcheck] compose up:", "ok" if ok else "FAIL")
-    if not ok:
-        return 1
-    healthy = wait_for_health()
-    print("[selfcheck] api healthy:", healthy)
+    ready, why = prerequisites_ready(root)
+    if not ready:
+        print(f"[selfcheck] FAIL: setup incomplete - {why}"); return 1
+    print("[selfcheck] setup ok")
+    started_pg = False
+    try:
+        started_pg = start_postgres()
+    except Exception as exc:
+        print(f"[selfcheck] FAIL: postgres start - {exc}"); return 1
+    print("[selfcheck] postgres ok", "(started)" if started_pg else "(already running)")
+    procs = []
+    try:
+        print("[selfcheck] ollama:", ollama_status(env))
+        ok, out = run_migrations(root)
+        print("[selfcheck] migrations:", "ok" if ok else "FAIL")
+        if not ok:
+            print(out[-700:]); return 1
+        procs = start_stack(root)
+        healthy = wait_for_health()
+        print("[selfcheck] api healthy:", healthy)
+    finally:
+        stop_stack(root, procs)
+        if started_pg:
+            stop_postgres()
     return 0 if healthy else 1
 
 
