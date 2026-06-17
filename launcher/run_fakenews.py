@@ -361,83 +361,46 @@ def wait_for_health(timeout_s: int = HEALTH_TIMEOUT_S) -> bool:
 
 
 # ----------------------------------------------------------------- app (window)
-_PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<style>
+# One window: a minimal splash while the stack boots, then it navigates straight to
+# the detector dashboard. No step-by-step checklist — splash -> detector.
+_CSS = """
   :root { color-scheme: dark; }
   html,body { margin:0; height:100%; background:#0f172a; color:#e2e8f0;
     font-family:'Segoe UI',system-ui,sans-serif; }
   .wrap { height:100%; display:flex; align-items:center; justify-content:center; }
-  .card { width:520px; padding:36px 40px; }
-  .brand { font-size:22px; font-weight:600; letter-spacing:.2px; }
+  .card { width:520px; padding:36px 40px; text-align:center; }
+  .brand { font-size:24px; font-weight:600; letter-spacing:.2px; }
   .brand .dot { color:#38bdf8; }
-  .sub { color:#94a3b8; font-size:13px; margin-top:4px; margin-bottom:26px; }
-  ul { list-style:none; padding:0; margin:0; }
-  li { display:flex; align-items:flex-start; gap:12px; padding:7px 0; font-size:14px; }
-  .ico { width:18px; height:18px; flex:none; margin-top:1px; border-radius:50%;
-    display:inline-block; }
-  .pending .ico { border:2px solid #334155; border-top-color:#38bdf8;
-    animation:spin .8s linear infinite; }
-  .ok .ico { background:#22c55e; }
-  .warn .ico { background:#f59e0b; }
-  .err .ico { background:#ef4444; }
-  .ok .txt { color:#cbd5e1; } .pending .txt { color:#e2e8f0; }
-  .warn .txt { color:#fbbf24; } .err .txt { color:#fca5a5; }
-  .hint { margin-top:22px; font-size:12px; color:#64748b; white-space:pre-wrap; }
+  .row { margin-top:22px; display:flex; align-items:center; justify-content:center;
+    gap:12px; }
+  .spin { width:18px; height:18px; border-radius:50%; border:2px solid #334155;
+    border-top-color:#38bdf8; animation:spin .8s linear infinite; display:inline-block; }
+  .msg { color:#94a3b8; font-size:14px; }
+  .err { margin-top:22px; color:#fca5a5; font-size:15px; }
+  .hint { margin-top:14px; font-size:12px; color:#64748b; white-space:pre-wrap; }
   @keyframes spin { to { transform:rotate(360deg); } }
-</style></head><body><div class="wrap"><div class="card">
-  <div class="brand">Fake-News <span class="dot">Detector</span></div>
-  <div class="sub">starting up&hellip;</div>
-  <ul>__ROWS__</ul>
-  <div class="hint">__HINT__</div>
-</div></div></body></html>"""
+"""
 
-_STATE_CLASS = {"..": "pending", "ok": "ok", "warn": "warn", "err": "err"}
+_BRAND = "<div class='brand'>Fake-News <span class='dot'>Detector</span></div>"
 
 
-class AppUI:
-    """Renders the loading screen into the pywebview window as steps progress."""
+def _page(body: str) -> str:
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<style>{_CSS}</style></head><body><div class='wrap'><div class='card'>"
+        f"{body}</div></div></body></html>"
+    )
 
-    def __init__(self) -> None:
-        self.window = None
-        self.steps: list[list[str]] = []  # [state, text]
-        self.hint = ""
 
-    def _render(self) -> None:
-        rows = "".join(
-            f'<li class="{_STATE_CLASS.get(s, "pending")}">'
-            f'<span class="ico"></span><span class="txt">{t}</span></li>'
-            for s, t in self.steps
-        )
-        html = _PAGE.replace("__ROWS__", rows).replace("__HINT__", self.hint)
-        if self.window is not None:
-            try:
-                self.window.load_html(html)
-            except Exception:
-                pass  # window may already be closing
+_SPLASH_HTML = _page(
+    _BRAND + "<div class='row'><span class='spin'></span>"
+    "<span class='msg'>starting&hellip;</span></div>"
+)
 
-    def initial_html(self) -> str:
-        return _PAGE.replace("__ROWS__", "").replace("__HINT__", "")
 
-    def begin(self, text: str) -> None:
-        self.steps.append(["..", text])
-        self._render()
-
-    def set_last(self, state: str, text: str | None = None) -> None:
-        if not self.steps:
-            self.steps.append([state, text or ""])
-        else:
-            self.steps[-1][0] = state
-            if text is not None:
-                self.steps[-1][1] = text
-        self._render()
-
-    def add(self, state: str, text: str) -> None:
-        self.steps.append([state, text])
-        self._render()
-
-    def set_hint(self, text: str) -> None:
-        self.hint = text
-        self._render()
+def _error_html(msg: str, hint: str = "") -> str:
+    hint_html = f"<div class='hint'>{hint}</div>" if hint else ""
+    return _page(f"{_BRAND}<div class='err'>{msg}</div>{hint_html}")
 
 
 def _message_box(title: str, text: str) -> None:
@@ -455,6 +418,25 @@ def _message_box(title: str, text: str) -> None:
 
 _SETUP_HINT = ("Run the one-time setup first (PowerShell):\n"
                "  scripts\\setup-native.ps1")
+
+FRONTEND_PORT = 5173
+
+
+def _port_open(port: int, timeout: float = 1.5) -> bool:
+    try:
+        with socket.create_connection(("localhost", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_port(port: int, timeout_s: int) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _port_open(port):
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def do_app(root: Path) -> None:
@@ -481,72 +463,62 @@ def do_app(root: Path) -> None:
         webbrowser.open(DASHBOARD)
         return
 
-    env = load_env(root)
-    ui = AppUI()
     window = webview.create_window(
-        "Fake-News Detector", html=ui.initial_html(), width=1180, height=820,
+        "Fake-News Detector", html=_SPLASH_HTML, width=1180, height=820,
         min_size=(900, 600),
     )
-    ui.window = window
     closing = threading.Event()
     procs: list[subprocess.Popen] = []
     started_pg = [False]  # True iff we started PostgreSQL (so we stop it on close)
 
+    def show_error(msg: str, hint: str = "") -> None:
+        try:
+            window.load_html(_error_html(msg, hint))
+        except Exception:
+            pass  # window may already be closing
+
     def worker() -> None:
+        # Boot the stack silently behind the splash, surfacing only a hard failure;
+        # then navigate straight to the detector dashboard.
         try:
             ensure_env_file(root)
 
-            ui.begin("Checking app setup")
             ready, why = prerequisites_ready(root)
             if not ready:
-                ui.set_last("err", f"Setup incomplete - {why}")
-                ui.set_hint(_SETUP_HINT)
+                show_error(f"Setup incomplete — {why}", _SETUP_HINT)
                 return
-            ui.set_last("ok", "PostgreSQL + backend venv + frontend deps present")
 
-            ui.begin("Starting PostgreSQL")
             try:
                 started_pg[0] = start_postgres()
             except Exception as exc:
-                ui.set_last("err", f"Could not start PostgreSQL: {exc}")
-                ui.set_hint(_SETUP_HINT)
+                show_error("Could not start PostgreSQL", str(exc) or _SETUP_HINT)
                 return
-            ui.set_last("ok", "PostgreSQL running"
-                        + (" (started)" if started_pg[0] else " (already running)"))
-
-            ui.begin("Checking Ollama + model")
-            level, msg = ollama_status(env)
-            ui.set_last("ok" if level == "ok" else "warn", msg)
 
             if closing.is_set():
                 return
-            ui.begin("Applying database migrations")
             ok, out = run_migrations(root)
             if not ok:
-                ui.set_last("err", "Migration failed")
-                ui.set_hint(out[-700:].strip())
+                show_error("Database migration failed", out[-500:].strip())
                 return
-            ui.set_last("ok", "Database up to date")
 
             if closing.is_set():
                 return
-            ui.begin("Starting services (API, worker, frontend)")
             procs.extend(start_stack(root))
-            ui.set_last("ok", "Services started")
 
-            ui.begin("Waiting for the API to be healthy")
-            if wait_for_health():
-                ui.set_last("ok", "API healthy")
-            else:
-                ui.set_last("warn", "API slow to start - loading anyway")
+            # Land on the detector as soon as it can render: the API healthy (so the
+            # dashboard has data) and the Vite dev server actually serving the page.
+            wait_for_health()
+            if not _wait_port(FRONTEND_PORT, 60):
+                show_error("The dashboard server didn't start",
+                           "Check logs/frontend.log, then reopen the app.")
+                return
 
             if closing.is_set():
                 return
-            ui.add("..", "Loading dashboard")
             window.load_url(DASHBOARD)
-        except Exception as exc:  # never leave the window stuck on a spinner
+        except Exception as exc:  # never leave the window stuck on the splash
             if not closing.is_set():
-                ui.add("err", f"Startup error: {exc!r}")
+                show_error("Startup error", repr(exc))
 
     def _on_closing(*_args, **_kwargs):
         _trace("closing event fired")
