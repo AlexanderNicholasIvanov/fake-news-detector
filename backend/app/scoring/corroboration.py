@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Article, ArticleEmbedding, Source
-from app.scoring.embeddings import embed, embed_text
 from app.scoring.settings import CORROBORATION, MODEL
 
 REQUEST_TIMEOUT = 180.0
@@ -106,6 +105,7 @@ def find_candidates(
     min_overlap = float(CORROBORATION.get("min_overlap", 0.10))
     cap = int(CORROBORATION.get("max_candidates", 8))
 
+    lead_chars = int(CORROBORATION.get("lead_chars", 300))
     target_tokens = significant_tokens(article["title"], _lead(article["full_text"]))
     if len(target_tokens) < 3:  # too thin to match reliably
         return []
@@ -113,11 +113,14 @@ def find_candidates(
     when = article["when"]
     # coalesce(published_at, created_at) for the candidate's timestamp
     ts = func.coalesce(Article.published_at, Article.created_at)
+    # Fetch only the lead (first lead_chars), not the whole article body — we only
+    # tokenize/display the lead, so pulling full_text for every windowed row is
+    # wasted I/O and memory.
     rows = session.execute(
         select(
             Article.id,
             Article.title,
-            Article.full_text,
+            func.left(Article.full_text, lead_chars),
             Article.source_id,
             Source.name,
             Source.reputation_tier,
@@ -133,15 +136,16 @@ def find_candidates(
     ).all()
 
     scored = []
-    for aid, title, full_text, source_id, source_name, tier in rows:
-        toks = significant_tokens(title, _lead(full_text))
+    for aid, title, lead, source_id, source_name, tier in rows:
+        lead = (lead or "").strip()
+        toks = significant_tokens(title, lead)
         ov = jaccard(target_tokens, toks)
         if ov >= min_overlap:
             scored.append(
                 {
                     "id": aid,
                     "title": title,
-                    "lead": _lead(full_text),
+                    "lead": lead,
                     "source_id": source_id,
                     "source_name": source_name,
                     "tier": tier,
@@ -164,6 +168,7 @@ def _vector_candidates(
     k = int(CORROBORATION.get("embedding_candidates", 8))
     min_sim = float(CORROBORATION.get("min_similarity", 0.55))
 
+    lead_chars = int(CORROBORATION.get("lead_chars", 300))
     when = article["when"]
     ts = func.coalesce(Article.published_at, Article.created_at)
     distance = ArticleEmbedding.embedding.cosine_distance(target_vec)
@@ -171,7 +176,7 @@ def _vector_candidates(
         select(
             Article.id,
             Article.title,
-            Article.full_text,
+            func.left(Article.full_text, lead_chars),  # lead only, not full body
             Article.source_id,
             Source.name,
             Source.reputation_tier,
@@ -191,7 +196,7 @@ def _vector_candidates(
     ).all()
 
     out = []
-    for aid, title, full_text, source_id, source_name, tier, dist in rows:
+    for aid, title, lead, source_id, source_name, tier, dist in rows:
         sim = 1.0 - float(dist)
         if sim < min_sim:
             continue
@@ -199,7 +204,7 @@ def _vector_candidates(
             {
                 "id": aid,
                 "title": title,
-                "lead": _lead(full_text),
+                "lead": (lead or "").strip(),
                 "source_id": source_id,
                 "source_name": source_name,
                 "tier": tier,
@@ -262,6 +267,10 @@ async def _adjudicate(
         "stream": False,
         "think": False,
         "format": _MATCH_SCHEMA,
+        "keep_alive": settings.ollama_keep_alive,
+        # Keep num_ctx identical to content scoring (8192). Both calls hit the same
+        # qwen3 model, so a different context size would force Ollama to realloc the
+        # KV cache when switching between them — reintroducing churn on one model.
         "options": {"temperature": 0, "num_ctx": 8192},
     }
     resp = await client.post(
@@ -287,17 +296,15 @@ async def score_corroboration(
 
     Candidates are the UNION of the lexical token-overlap filter and a cosine
     nearest-neighbour search over stored embeddings, so paraphrased coverage is
-    not missed. `target_vec` (the article's embedding) is reused when the caller
-    already computed it; otherwise it is embedded here. If embedding is
-    unavailable, recall gracefully degrades to lexical-only.
+    not missed. `target_vec` is the article's embedding, supplied by the caller
+    (the runner computes it in a batched embedding pass; re-scoring loads the
+    stored one). When it's None the vector side is skipped and recall degrades to
+    lexical-only — the caller owns embedding so this stays single-model.
 
     Returns (subscore, evidence) where subscore is None when nothing corroborates.
     evidence (when present) = {distinct_sources, any_trusted, matched:[...], ...}.
     """
     lexical = find_candidates(session, article)
-
-    if target_vec is None:
-        target_vec = await embed(client, embed_text(article["title"], article["full_text"]))
     vector = _vector_candidates(session, article, target_vec) if target_vec else []
 
     candidates = _merge_candidates(lexical, vector)

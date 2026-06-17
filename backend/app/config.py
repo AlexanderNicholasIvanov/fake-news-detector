@@ -10,8 +10,13 @@ class Settings(BaseSettings):
 
     # Ollama / scoring (M2+). Named *_BASE_URL to avoid colliding with Ollama's
     # own OLLAMA_HOST env var (which sets the server's bind address on the host).
-    ollama_base_url: str = "http://host.docker.internal:11434"
+    # Native run: Ollama is on the same host, so plain localhost.
+    ollama_base_url: str = "http://localhost:11434"
     scoring_model: str = "qwen3:14b"
+    # How long Ollama keeps a model resident after a request. The default (5m)
+    # is shorter than the poll interval, so models unload + reload every cycle
+    # (qwen3:14b is ~9.3 GB). Keep them warm between cycles. "-1" = never unload.
+    ollama_keep_alive: str = "30m"
 
     # Worker (M1+)
     poll_interval_minutes: int = 10

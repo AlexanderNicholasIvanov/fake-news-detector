@@ -38,10 +38,37 @@ def _unscored(session: Session, limit: int) -> list[tuple]:
     return list(session.execute(stmt).all())
 
 
+async def _embed_pass(
+    client: httpx.AsyncClient, rows: list[tuple]
+) -> dict[int, list[float]]:
+    """Embed every article and store it, in one pass — so the embedding model
+    stays resident (one load, not a qwen3<->nomic swap per article). Returns the
+    in-memory {article_id: vector} for reuse by corroboration. Failure-tolerant."""
+    vecs: dict[int, list[float]] = {}
+    for article_id, title, text, *_ in rows:
+        try:
+            vec = await embed(client, embed_text(title, text))
+        except Exception as exc:
+            print(f"[score] embed error id={article_id}: {exc}", flush=True)
+            continue
+        if not vec:
+            continue
+        vecs[article_id] = vec
+        try:
+            with SessionLocal() as session:
+                store_embedding(session, article_id, vec)
+        except Exception as exc:
+            print(f"[score] embed store error id={article_id}: {exc}", flush=True)
+    return vecs
+
+
 async def score_pending(limit: int) -> int:
     """Score up to `limit` unscored articles. Per-article LLM failures are
-    isolated. Returns the number scored. Runs sequentially — Ollama serializes a
-    single model anyway."""
+    isolated. Returns the number scored.
+
+    Two passes to avoid model-swap thrash: first embed everything (embedding model
+    resident), then score + corroborate everything (qwen3 resident — corroboration
+    adjudication shares that model, so the scoring pass makes no model switches)."""
     with SessionLocal() as session:
         rows = _unscored(session, limit)
     if not rows:
@@ -49,6 +76,8 @@ async def score_pending(limit: int) -> int:
 
     scored = 0
     async with httpx.AsyncClient() as client:
+        vecs = await _embed_pass(client, rows)
+
         for article_id, title, text, url, tier, source_id, when in rows:
             try:
                 result = await score_content(client, title, text)
@@ -61,16 +90,9 @@ async def score_pending(limit: int) -> int:
 
             rep_subscore, _ = reputation_subscore(tier, url)
 
-            # Phase 2: embed the article once — reused for corroboration matching
-            # and stored so future articles can match against it. Failure-tolerant.
-            target_vec = None
-            try:
-                target_vec = await embed(client, embed_text(title, text))
-            except Exception as exc:
-                print(f"[score] embed error id={article_id}: {exc}", flush=True)
-
             # Phase 2: cross-source corroboration (positive-only; None if no match).
-            # Candidates = lexical token-overlap UNION cosine nearest-neighbours.
+            # Candidates = lexical token-overlap UNION cosine nearest-neighbours;
+            # the embedding was computed in the pass above (no re-embed here).
             corro_subscore, corro_evidence = None, None
             try:
                 article = {
@@ -79,17 +101,10 @@ async def score_pending(limit: int) -> int:
                 }
                 with SessionLocal() as session:
                     corro_subscore, corro_evidence = await score_corroboration(
-                        session, client, article, target_vec
+                        session, client, article, vecs.get(article_id)
                     )
             except Exception as exc:
                 print(f"[score] corroboration error id={article_id}: {exc}", flush=True)
-
-            if target_vec:
-                try:
-                    with SessionLocal() as session:
-                        store_embedding(session, article_id, target_vec)
-                except Exception as exc:
-                    print(f"[score] embed store error id={article_id}: {exc}", flush=True)
 
             final, band = fuse(result["content_subscore"], rep_subscore, corro_subscore)
 

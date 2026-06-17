@@ -85,8 +85,17 @@ def list_articles(
 
 @router.get("/{article_id}", response_model=ArticleDetailOut)
 def get_article(article_id: int, session: Session = Depends(get_session)) -> ArticleDetailOut:
-    article = session.get(Article, article_id)
+    article = session.scalar(
+        select(Article).options(selectinload(Article.source)).where(Article.id == article_id)
+    )
     if article is None:
         raise HTTPException(status_code=404, detail="Article not found")
-    score = article.scores[0] if article.scores else None
+    # Fetch just the latest score — the article may have many (re-scoring appends
+    # rows); loading the whole relationship to take [0] gets slower over time.
+    score = session.scalar(
+        select(Score)
+        .where(Score.article_id == article_id)
+        .order_by(Score.id.desc())
+        .limit(1)
+    )
     return _to_out(article, score, detail=True)

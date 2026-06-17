@@ -37,7 +37,7 @@ async def embed(client: httpx.AsyncClient, text: str) -> list[float] | None:
     """Embed `text` via Ollama. Returns the vector, or None on failure/empty input."""
     if not text:
         return None
-    payload = {"model": EMBED_MODEL, "input": text}
+    payload = {"model": EMBED_MODEL, "input": text, "keep_alive": settings.ollama_keep_alive}
     try:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/embed", json=payload, timeout=REQUEST_TIMEOUT

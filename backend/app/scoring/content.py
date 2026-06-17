@@ -28,6 +28,7 @@ async def score_content(
         "stream": False,
         "think": False,
         "format": CONTENT_SCHEMA,
+        "keep_alive": settings.ollama_keep_alive,
         "options": {"temperature": 0, "num_ctx": 8192},
     }
     resp = await client.post(
