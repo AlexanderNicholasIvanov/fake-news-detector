@@ -6,6 +6,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import Article, Score, Source
 from app.scoring.content import score_content
@@ -18,13 +19,17 @@ from app.scoring.settings import CORROBORATION, MODEL, WEIGHTS
 
 
 def _unscored(session: Session, limit: int) -> list[tuple]:
-    """ok+unscored articles, with the fields content + corroboration scoring need.
+    """ok+unscored articles to grade next, with the fields content + corroboration
+    scoring need.
 
-    Oldest-first (FIFO): under a sustained backlog this drains in arrival order so
-    no article is permanently starved. Newest-first would keep scoring fresh
-    arrivals and strand the oldest unscored articles indefinitely.
+    Hybrid ordering: most of the batch is newest-first, so freshly ingested news is
+    scored promptly; a slice (score_backlog_share) is the OLDEST unscored, so any
+    backlog still drains and no article is permanently starved. This balances
+    "recent news is current" against "the backlog eventually clears". Strict
+    newest-first would starve an old backlog; strict oldest-first delays recent news
+    behind the whole backlog.
     """
-    stmt = (
+    base = (
         select(
             Article.id,
             Article.title,
@@ -37,10 +42,19 @@ def _unscored(session: Session, limit: int) -> list[tuple]:
         .join(Source, Source.id == Article.source_id)
         .outerjoin(Score, Score.article_id == Article.id)
         .where(Article.extraction_status == "ok", Score.id.is_(None))
-        .order_by(Article.created_at.asc())
-        .limit(limit)
     )
-    return list(session.execute(stmt).all())
+    old_n = int(limit * float(settings.score_backlog_share)) if limit > 1 else 0
+    new_n = limit - old_n
+
+    # Newest-first slice first (priority), then fill from the oldest; dedup by id so
+    # a small backlog (where the two slices overlap) isn't double-counted.
+    rows: dict[int, tuple] = {}
+    for r in session.execute(base.order_by(Article.created_at.desc()).limit(new_n)).all():
+        rows[r[0]] = r
+    if old_n:
+        for r in session.execute(base.order_by(Article.created_at.asc()).limit(old_n)).all():
+            rows.setdefault(r[0], r)
+    return list(rows.values())
 
 
 async def _embed_pass(

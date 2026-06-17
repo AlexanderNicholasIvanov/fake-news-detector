@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # these back-to-back to drain a backlog. Override via SCORE_BATCH_SIZE.
     score_batch_size: int = 50
 
+    # Fraction of each grading batch spent on the OLDEST unscored articles; the rest
+    # are graded newest-first. > 0 keeps freshly ingested news scored promptly while
+    # still draining any backlog so nothing is permanently starved. 0 = strict
+    # newest-first (recent always first, but an old backlog can be starved).
+    score_backlog_share: float = 0.25
+
     # Worker grading loop. Grading begins only after the API is serving, so the
     # dashboard "loads first"; then unscored articles are graded continuously.
     api_health_url: str = "http://localhost:8000/health"
