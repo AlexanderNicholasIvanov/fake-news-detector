@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     # Worker (M1+)
     poll_interval_minutes: int = 10
 
-    # Scoring (M2+) — max articles scored per cycle (LLM calls are sequential)
-    score_batch_size: int = 25
+    # Scoring (M2+) — max articles scored per cycle (LLM calls are sequential).
+    # Sized to drain ingestion backlogs faster; a cycle that runs longer than the
+    # poll interval just means the next poll is skipped (APScheduler max_instances=1),
+    # so scoring runs effectively back-to-back. Override via SCORE_BATCH_SIZE.
+    score_batch_size: int = 50
 
 
 settings = Settings()

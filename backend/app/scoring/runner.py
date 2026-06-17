@@ -18,7 +18,12 @@ from app.scoring.settings import CORROBORATION, MODEL, WEIGHTS
 
 
 def _unscored(session: Session, limit: int) -> list[tuple]:
-    """ok+unscored articles, with the fields content + corroboration scoring need."""
+    """ok+unscored articles, with the fields content + corroboration scoring need.
+
+    Oldest-first (FIFO): under a sustained backlog this drains in arrival order so
+    no article is permanently starved. Newest-first would keep scoring fresh
+    arrivals and strand the oldest unscored articles indefinitely.
+    """
     stmt = (
         select(
             Article.id,
@@ -32,7 +37,7 @@ def _unscored(session: Session, limit: int) -> list[tuple]:
         .join(Source, Source.id == Article.source_id)
         .outerjoin(Score, Score.article_id == Article.id)
         .where(Article.extraction_status == "ok", Score.id.is_(None))
-        .order_by(Article.created_at.desc())
+        .order_by(Article.created_at.asc())
         .limit(limit)
     )
     return list(session.execute(stmt).all())
