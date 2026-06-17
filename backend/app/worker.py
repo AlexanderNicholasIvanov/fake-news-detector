@@ -1,13 +1,23 @@
-"""Ingestion worker: polls feeds on an interval, extracts full text, persists.
+"""Ingestion + grading worker.
+
+Polls feeds on an interval and extracts full text, and separately grades articles
+for credibility. Grading runs as a continuous background loop that drains the
+unscored backlog oldest-first, one article at a time — each article's score is
+committed as soon as it is produced, so the dashboard fills in one by one.
+
+To keep startup responsive, grading does not begin until the API is serving: the
+app (dashboard) loads first, then grading starts.
 
 Run continuously:   python -m app.worker
-Run a single cycle: python -m app.worker --once
+Run a single pass:  python -m app.worker --once   (one ingest + one grade batch)
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
+import time
+import urllib.request
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -31,8 +41,6 @@ def _wait_for_db(retries: int = 30, delay: float = 2.0) -> None:
             return
         except (OperationalError, ProgrammingError) as exc:
             print(f"[worker] waiting for db ({attempt}/{retries}): {exc}", flush=True)
-            import time
-
             time.sleep(delay)
     raise RuntimeError("database/schema not ready after retries")
 
@@ -78,19 +86,55 @@ async def _extract_pending() -> int:
     return ok
 
 
-async def run_cycle() -> None:
-    """One full poll → discover → extract pass. Failures are isolated."""
+async def ingest_cycle() -> None:
+    """Discover new articles + extract full text (no grading). Failures isolated."""
     try:
         with SessionLocal() as session:
             new = await asyncio.to_thread(discover_new_articles, session)
         extracted = await _extract_pending()
-        scored = await score_pending(settings.score_batch_size)
-        print(
-            f"[worker] cycle done: {new} new, {extracted} extracted, {scored} scored",
-            flush=True,
-        )
+        print(f"[worker] ingest: {new} new, {extracted} extracted", flush=True)
     except Exception as exc:  # never let a bad cycle kill the loop
-        print(f"[worker] cycle error: {exc}", flush=True)
+        print(f"[worker] ingest error: {exc}", flush=True)
+
+
+async def _grade_batch() -> int:
+    """Grade the next batch of unscored articles (oldest-first; each commits as it is
+    graded). Returns the number graded. Per-article failures are isolated inside
+    score_pending; a transport-level failure here returns 0 so the loop can retry."""
+    try:
+        return await score_pending(settings.score_batch_size)
+    except Exception as exc:
+        print(f"[worker] grade error: {exc}", flush=True)
+        return 0
+
+
+def _api_ready(url: str, timeout: float = 2.0) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+async def _wait_for_api(url: str, max_seconds: int) -> bool:
+    """Wait (bounded) for the API to be serving, so the dashboard loads before grading
+    starts. Returns True if it came up, False if we gave up (then grade anyway)."""
+    deadline = time.monotonic() + max_seconds
+    while time.monotonic() < deadline:
+        if await asyncio.to_thread(_api_ready, url):
+            return True
+        await asyncio.sleep(2)
+    return False
+
+
+async def grading_loop() -> None:
+    """Grade unscored articles continuously, oldest-first, one by one (each commits as
+    produced). When the backlog is clear, idle and re-check periodically so newly
+    ingested articles get picked up."""
+    while True:
+        graded = await _grade_batch()
+        if graded == 0:
+            await asyncio.sleep(settings.grade_idle_seconds)
 
 
 async def main() -> None:
@@ -101,21 +145,31 @@ async def main() -> None:
         n = await asyncio.to_thread(load_sources, session)
     print(f"[worker] loaded {n} active sources", flush=True)
 
-    await run_cycle()
     if run_once:
+        await ingest_cycle()
+        await _grade_batch()
         return
 
+    # Ingest on a timer (independent of grading).
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        run_cycle, "interval", minutes=settings.poll_interval_minutes, id="poll"
+        ingest_cycle, "interval", minutes=settings.poll_interval_minutes, id="ingest"
     )
     scheduler.start()
+
+    # Load first, then grade: hold the GPU-heavy grading until the API is serving
+    # (bounded wait) so the dashboard comes up promptly. Then kick an initial ingest
+    # in the background and grade the unscored backlog continuously, one by one.
+    up = await _wait_for_api(
+        settings.api_health_url, settings.grade_start_after_api_seconds
+    )
     print(
-        f"[worker] scheduled every {settings.poll_interval_minutes} min; running.",
+        f"[worker] app {'is up' if up else 'health wait timed out'}; "
+        "grading unscored articles one by one",
         flush=True,
     )
-    while True:
-        await asyncio.sleep(3600)
+    _initial_ingest = asyncio.create_task(ingest_cycle())  # noqa: F841 fire-and-forget
+    await grading_loop()
 
 
 if __name__ == "__main__":

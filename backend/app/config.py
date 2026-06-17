@@ -21,11 +21,16 @@ class Settings(BaseSettings):
     # Worker (M1+)
     poll_interval_minutes: int = 10
 
-    # Scoring (M2+) — max articles scored per cycle (LLM calls are sequential).
-    # Sized to drain ingestion backlogs faster; a cycle that runs longer than the
-    # poll interval just means the next poll is skipped (APScheduler max_instances=1),
-    # so scoring runs effectively back-to-back. Override via SCORE_BATCH_SIZE.
+    # Scoring (M2+) — max articles graded per query before re-checking (LLM calls
+    # are sequential; each article commits as it is graded). The grading loop runs
+    # these back-to-back to drain a backlog. Override via SCORE_BATCH_SIZE.
     score_batch_size: int = 50
+
+    # Worker grading loop. Grading begins only after the API is serving, so the
+    # dashboard "loads first"; then unscored articles are graded continuously.
+    api_health_url: str = "http://localhost:8000/health"
+    grade_start_after_api_seconds: int = 120  # max wait for the app to load before grading
+    grade_idle_seconds: int = 30  # when the backlog is clear, recheck this often
 
 
 settings = Settings()
