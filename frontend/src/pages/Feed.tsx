@@ -14,6 +14,14 @@ import ArticleDetail from "../components/ArticleDetail";
 
 const PAGE_SIZE = 50;
 
+function formatDate(s: string | null): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  return isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
 export default function Feed() {
   const [sources, setSources] = useState<Source[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -74,6 +82,7 @@ export default function Feed() {
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
               <th className="px-4 py-2 font-medium">Title</th>
               <th className="px-4 py-2 font-medium">Source</th>
+              <th className="px-4 py-2 font-medium">Published</th>
               <th className="px-4 py-2 font-medium">Topic</th>
               <th className="px-4 py-2 font-medium">Credibility</th>
             </tr>
@@ -89,6 +98,9 @@ export default function Feed() {
                   {a.title ?? a.url}
                 </td>
                 <td className="px-4 py-2.5 text-slate-500">{a.source_name ?? "—"}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">
+                  {formatDate(a.published_at)}
+                </td>
                 <td className="px-4 py-2.5">
                   {a.latest_score?.topic ? (
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-xs capitalize text-slate-600">
@@ -105,7 +117,7 @@ export default function Feed() {
             ))}
             {!loading && articles.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                   No articles match these filters.
                 </td>
               </tr>
