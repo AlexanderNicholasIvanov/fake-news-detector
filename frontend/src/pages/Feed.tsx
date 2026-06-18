@@ -106,15 +106,18 @@ export default function Feed() {
 
       {error && <p className="text-red-600">Failed to reach API: {error}</p>}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <table className="w-full border-collapse text-sm">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        {/* table-fixed + per-column widths so the table always fits its container
+            (Title absorbs the slack and truncates); overflow-x-auto is a safety net
+            so a narrow window scrolls instead of clipping the right-most column. */}
+        <table className="w-full table-fixed border-collapse text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
               <th className="px-4 py-2 font-medium">Title</th>
-              <th className="px-4 py-2 font-medium">Source</th>
-              <th className="px-4 py-2 font-medium">Published</th>
-              <th className="px-4 py-2 font-medium">Topic</th>
-              <th className="px-4 py-2 font-medium">Credibility</th>
+              <th className="w-52 px-4 py-2 font-medium">Source</th>
+              <th className="w-28 px-4 py-2 font-medium">Published</th>
+              <th className="w-32 px-4 py-2 font-medium">Topic</th>
+              <th className="w-48 px-4 py-2 font-medium">Credibility</th>
             </tr>
           </thead>
           <tbody>
@@ -124,13 +127,17 @@ export default function Feed() {
                 onClick={() => setSelected(a.id)}
                 className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
               >
-                <td className="max-w-md truncate px-4 py-2.5 text-slate-800">
+                <td className="truncate px-4 py-2.5 text-slate-800">
                   {a.title ?? a.url}
                 </td>
                 <td className="px-4 py-2.5 text-slate-500">
                   <div className="flex items-center gap-2">
-                    <span className="truncate">{a.source_name ?? "—"}</span>
-                    {a.source_tier && <TierBadge tier={a.source_tier} />}
+                    <span className="min-w-0 truncate">{a.source_name ?? "—"}</span>
+                    {a.source_tier && (
+                      <span className="shrink-0">
+                        <TierBadge tier={a.source_tier} />
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">
