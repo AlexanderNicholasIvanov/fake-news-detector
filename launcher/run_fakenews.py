@@ -12,9 +12,12 @@ Built with PyInstaller (see build.py) into a single binary, run-fakenews.exe:
                      started). One exe is the entire lifecycle.
 
 The stack runs natively against the bundled portable PostgreSQL (with pgvector)
-and the host's Ollama. There is no containerisation: the API and worker run from
-backend/.venv, the frontend from its npm dev server. One-time setup (PostgreSQL,
-venv, frontend deps, DB role/extension) is done by scripts/setup-native.ps1.
+and the host's Ollama. The launcher manages both lifecycles: it starts the bundled
+PostgreSQL and — once the dashboard has loaded — the Ollama server (the scoring
+engine), and on close stops only the ones it started. There is no containerisation:
+the API and worker run from backend/.venv, the frontend from its npm dev server.
+One-time setup (PostgreSQL, venv, frontend deps, DB role/extension) is done by
+scripts/setup-native.ps1; Ollama is installed once from https://ollama.com.
 
 Hidden mode for testing: pass --selfcheck to run the full startup sequence in the
 console (no window) and exit 0/1 — used to validate the frozen exe headlessly.
@@ -42,6 +45,7 @@ HEALTH_TIMEOUT_S = 240
 
 DB_HOST = "localhost"
 DB_PORT = 5432
+OLLAMA_PORT = 11434
 
 # Windows process-creation flag: don't pop a console window for child processes.
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -202,8 +206,9 @@ def ollama_status(env: dict[str, str]) -> tuple[str, str]:
     try:
         tags = http_json(OLLAMA_TAGS)
     except (urllib.error.URLError, OSError, ValueError):
-        return "warn", ("Ollama not reachable - scoring will be idle. Start Ollama "
-                        "with OLLAMA_HOST=0.0.0.0:11434.")
+        return "warn", ("Ollama not reachable - scoring will be idle. The launcher "
+                        "starts it automatically when Ollama is installed; install "
+                        "it from https://ollama.com if missing.")
     names = {m.get("name", "") for m in tags.get("models", [])}
     if model in names or any(n.split(":")[0] == model.split(":")[0] for n in names):
         return "ok", f"Ollama running, '{model}' available"
@@ -266,6 +271,42 @@ def stop_postgres() -> None:
     if not pg_installed():
         return
     _pg_ctl("-D", str(pg_data()), "-m", "fast", "stop")
+
+
+# Ollama is the scoring engine (embeddings + the credibility LLM). It isn't bundled
+# — the user installs it once — but the launcher manages its server lifecycle the
+# same way it does PostgreSQL: start it if nothing is listening, and stop only what
+# we ourselves started (a pre-existing tray/server instance is left alone).
+def ollama_exe() -> str | None:
+    """Locate the Ollama binary: PATH first, then the Windows default install dir."""
+    found = shutil.which("ollama") or shutil.which("ollama.exe")
+    if found:
+        return found
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        cand = Path(local) / "Programs" / "Ollama" / "ollama.exe"
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+def start_ollama(root: Path) -> subprocess.Popen | None:
+    """Start `ollama serve` if nothing is listening on 11434. Returns the Popen iff
+    THIS call started it (so teardown stops only what we own); None if it was already
+    running or the binary isn't installed.
+
+    Non-fatal by design: the dashboard and ingestion run without Ollama — only
+    scoring needs it — and the worker's grading loop retries, so a slow or absent
+    engine just means articles stay unscored until it's up, never a failed launch.
+    """
+    if _port_open(OLLAMA_PORT):
+        return None  # already running (tray app or a prior serve) — leave it alone
+    exe = ollama_exe()
+    if not exe:
+        return None  # not installed; ollama_status() surfaces a warning in selfcheck
+    proc = _spawn([exe, "serve"], root, log_dir(root) / "ollama.log", env=child_env(root))
+    _wait_port(OLLAMA_PORT, 20)  # best-effort warm-up; don't fail the app if it's slow
+    return proc
 
 
 def run_migrations(root: Path) -> tuple[bool, str]:
@@ -470,6 +511,7 @@ def do_app(root: Path) -> None:
     closing = threading.Event()
     procs: list[subprocess.Popen] = []
     started_pg = [False]  # True iff we started PostgreSQL (so we stop it on close)
+    ollama_proc: list[subprocess.Popen | None] = [None]  # set iff we started Ollama
 
     def show_error(msg: str, hint: str = "") -> None:
         try:
@@ -516,6 +558,15 @@ def do_app(root: Path) -> None:
             if closing.is_set():
                 return
             window.load_url(DASHBOARD)
+
+            # Dashboard is up — now warm the scoring engine in the background. Doing
+            # this after the load keeps "the detector loads first"; scoring then
+            # comes online and the worker drains the unscored backlog. Non-fatal.
+            if not closing.is_set():
+                try:
+                    ollama_proc[0] = start_ollama(root)
+                except Exception:
+                    pass  # scoring stays idle until Ollama is up; never blocks the app
         except Exception as exc:  # never leave the window stuck on the splash
             if not closing.is_set():
                 show_error("Startup error", repr(exc))
@@ -553,6 +604,9 @@ def do_app(root: Path) -> None:
     work.join(timeout=2)
     _trace("stop_stack begin")
     stop_stack(root, procs)
+    if ollama_proc[0] is not None:
+        _trace("stop_ollama begin")
+        _taskkill_tree(ollama_proc[0].pid)  # only the serve WE started; tray app untouched
     if started_pg[0]:
         _trace("stop_postgres begin")
         stop_postgres()
@@ -576,8 +630,11 @@ def do_selfcheck(root: Path) -> int:
         print(f"[selfcheck] FAIL: postgres start - {exc}"); return 1
     print("[selfcheck] postgres ok", "(started)" if started_pg else "(already running)")
     procs = []
+    ollama_proc = None
     try:
-        print("[selfcheck] ollama:", ollama_status(env))
+        ollama_proc = start_ollama(root)
+        print("[selfcheck] ollama:", ollama_status(env),
+              "(started)" if ollama_proc else "(already running / not installed)")
         ok, out = run_migrations(root)
         print("[selfcheck] migrations:", "ok" if ok else "FAIL")
         if not ok:
@@ -587,6 +644,8 @@ def do_selfcheck(root: Path) -> int:
         print("[selfcheck] api healthy:", healthy)
     finally:
         stop_stack(root, procs)
+        if ollama_proc is not None:
+            _taskkill_tree(ollama_proc.pid)
         if started_pg:
             stop_postgres()
     return 0 if healthy else 1

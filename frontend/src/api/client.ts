@@ -1,4 +1,11 @@
-import type { Article, ArticleDetail, Source, Stats, Topic } from "../types";
+import type {
+  Article,
+  ArticleDetail,
+  ScoringStatus,
+  Source,
+  Stats,
+  Topic,
+} from "../types";
 
 // Requests go to /api/* and are proxied to the backend by Vite (see vite.config.ts).
 
@@ -34,6 +41,10 @@ export function fetchTopics(): Promise<Topic[]> {
 
 export function fetchStats(): Promise<Stats> {
   return getJSON("/api/stats");
+}
+
+export function fetchScoringStatus(): Promise<ScoringStatus> {
+  return getJSON("/api/scoring-status");
 }
 
 async function getJSON<T>(url: string): Promise<T> {

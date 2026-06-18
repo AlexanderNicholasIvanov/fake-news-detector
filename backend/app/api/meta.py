@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_session
 from app.models import Article, Score, Source
-from app.schemas import SourceOut, StatsOut, TopicOut
+from app.schemas import ScoringStatusOut, SourceOut, StatsOut, TopicOut
+from app.scoring.embeddings import EMBED_MODEL
 
 router = APIRouter(prefix="/api", tags=["meta"])
 
@@ -48,6 +51,38 @@ def stats(session: Session = Depends(get_session)) -> StatsOut:
     bands = {band: count for band, count in band_rows}
     scored = sum(bands.values())
     return StatsOut(total_articles=total, extracted=extracted, scored=scored, bands=bands)
+
+
+@router.get("/scoring-status", response_model=ScoringStatusOut)
+def scoring_status() -> ScoringStatusOut:
+    """Is the scoring engine (Ollama) reachable, and are the required models pulled?
+
+    Drives the dashboard's engine indicator. A best-effort probe of the same Ollama
+    the worker scores against — never raises; an unreachable engine reports offline.
+    """
+    scoring_model = settings.scoring_model
+    out = ScoringStatusOut(
+        engine="offline",
+        scoring_model=scoring_model,
+        scoring_model_ready=False,
+        embedding_model=EMBED_MODEL,
+        embedding_model_ready=False,
+    )
+    try:
+        resp = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=3.0)
+        resp.raise_for_status()
+        names = {m.get("name", "") for m in resp.json().get("models", [])}
+    except (httpx.HTTPError, ValueError):
+        return out  # offline
+
+    def _present(model: str) -> bool:
+        base = model.split(":")[0]
+        return model in names or any(n.split(":")[0] == base for n in names)
+
+    out.engine = "online"
+    out.scoring_model_ready = _present(scoring_model)
+    out.embedding_model_ready = _present(EMBED_MODEL)
+    return out
 
 
 @router.get("/topics", response_model=list[TopicOut])

@@ -55,3 +55,13 @@ class StatsOut(BaseModel):
 class TopicOut(BaseModel):
     topic: str
     count: int
+
+
+class ScoringStatusOut(BaseModel):
+    """Health of the scoring engine (Ollama) for the dashboard indicator."""
+
+    engine: str  # "online" | "offline"
+    scoring_model: str
+    scoring_model_ready: bool
+    embedding_model: str
+    embedding_model_ready: bool

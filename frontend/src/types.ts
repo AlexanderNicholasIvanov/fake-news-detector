@@ -71,3 +71,11 @@ export interface Topic {
   topic: string;
   count: number;
 }
+
+export interface ScoringStatus {
+  engine: "online" | "offline";
+  scoring_model: string;
+  scoring_model_ready: boolean;
+  embedding_model: string;
+  embedding_model_ready: boolean;
+}
