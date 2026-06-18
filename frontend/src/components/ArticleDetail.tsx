@@ -2,12 +2,21 @@ import { useEffect, useState } from "react";
 import { fetchArticle } from "../api/client";
 import type { ArticleDetail as Detail, RedFlag } from "../types";
 import ScoreBreakdown from "./ScoreBreakdown";
+import TierBadge from "./TierBadge";
 
 const SEVERITY_CLS: Record<RedFlag["severity"], string> = {
   high: "bg-red-100 text-red-800",
   medium: "bg-amber-100 text-amber-800",
   low: "bg-slate-100 text-slate-700",
 };
+
+function formatDate(s: string | null): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  return isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
 
 export default function ArticleDetail({
   articleId,
@@ -60,19 +69,18 @@ export default function ArticleDetail({
               >
                 {detail.title ?? detail.url}
               </a>
-              <p className="mt-1 text-sm text-slate-500">
-                {detail.source_name}
-                {detail.source_tier && (
-                  <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs capitalize">
-                    {detail.source_tier}
-                  </span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                <span>{detail.source_name}</span>
+                {detail.source_tier && <TierBadge tier={detail.source_tier} />}
+                {detail.published_at && (
+                  <span className="text-slate-400">{formatDate(detail.published_at)}</span>
                 )}
                 {detail.latest_score?.topic && (
-                  <span className="ml-2 rounded bg-sky-50 px-1.5 py-0.5 text-xs capitalize text-sky-700">
+                  <span className="rounded bg-sky-50 px-1.5 py-0.5 text-xs capitalize text-sky-700">
                     {detail.latest_score.topic}
                   </span>
                 )}
-              </p>
+              </div>
             </div>
 
             {detail.latest_score ? (

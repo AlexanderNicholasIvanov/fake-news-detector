@@ -6,11 +6,12 @@ import {
   fetchTopics,
   type ArticleQuery,
 } from "../api/client";
-import type { Article, Source, Stats, Topic } from "../types";
+import type { Article, Score, Source, Stats, Topic } from "../types";
 import ScoreCard from "../components/ScoreCard";
 import StatsHeader from "../components/StatsHeader";
 import FilterBar from "../components/FilterBar";
 import ArticleDetail from "../components/ArticleDetail";
+import TierBadge from "../components/TierBadge";
 
 const PAGE_SIZE = 50;
 
@@ -20,6 +21,35 @@ function formatDate(s: string | null): string {
   return isNaN(d.getTime())
     ? "—"
     : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Compact at-a-glance signals from the score: red flags raised and how many
+ * other sources corroborated the same event. Both already ride along in the
+ * row payload; this surfaces them without opening the detail drawer. */
+function Signals({ score }: { score: Score }) {
+  const flags = score.red_flags?.length ?? 0;
+  const corr = score.corroboration?.distinct_sources ?? 0;
+  if (!flags && !corr) return null;
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      {flags > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 font-medium text-red-600"
+          title={`${flags} red flag${flags > 1 ? "s" : ""} raised`}
+        >
+          ⚑ {flags}
+        </span>
+      )}
+      {corr > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 font-medium text-sky-600"
+          title={`Corroborated by ${corr} other source${corr > 1 ? "s" : ""}`}
+        >
+          ✓ {corr}
+        </span>
+      )}
+    </span>
+  );
 }
 
 export default function Feed() {
@@ -97,7 +127,12 @@ export default function Feed() {
                 <td className="max-w-md truncate px-4 py-2.5 text-slate-800">
                   {a.title ?? a.url}
                 </td>
-                <td className="px-4 py-2.5 text-slate-500">{a.source_name ?? "—"}</td>
+                <td className="px-4 py-2.5 text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate">{a.source_name ?? "—"}</span>
+                    {a.source_tier && <TierBadge tier={a.source_tier} />}
+                  </div>
+                </td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">
                   {formatDate(a.published_at)}
                 </td>
@@ -111,7 +146,10 @@ export default function Feed() {
                   )}
                 </td>
                 <td className="px-4 py-2.5">
-                  <ScoreCard score={a.latest_score} />
+                  <div className="flex items-center gap-2.5">
+                    <ScoreCard score={a.latest_score} />
+                    {a.latest_score && <Signals score={a.latest_score} />}
+                  </div>
                 </td>
               </tr>
             ))}
